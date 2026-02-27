@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Coinversaa/mcp-server",
+  "description": "Crypto intelligence for AI agents. Hyperliquid trader analytics, cohorts, and live market data.",
+  "repository": {
+    "url": "https://github.com/coinversaa/mcp-server",
+    "source": "github"
+  },
+  "version": "0.2.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@coinversaa/mcp-server",
+      "version": "0.2.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "Coinversaa API key (starts with cvsa_). Get one at https://coinversaa.ai/developers",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true,
+          "name": "COINVERSAA_API_KEY"
+        }
+      ]
+    }
+  ]
+}

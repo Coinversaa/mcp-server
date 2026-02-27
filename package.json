@@ -1,6 +1,6 @@
 {
     "name": "@coinversaa/mcp-server",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "description": "Coinversaa Pulse — Crypto intelligence MCP server for AI agents. 26 tools covering Hyperliquid trader analytics, cohort intelligence, live market data, and more.",
     "type": "module",
     "bin": {
@@ -43,5 +43,5 @@
       "url": "https://github.com/coinversaa/mcp-server/issues"
     },
     "license": "MIT",
-    "mcpName": "io.github.coinversaa/mcp-server"
+    "mcpName": "io.github.Coinversaa/mcp-server"
   }
