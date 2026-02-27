@@ -8,7 +8,7 @@ Crypto intelligence for AI agents. Query 710K+ Hyperliquid wallets, 1.8B+ trades
 
 ### 1. Get an API Key
 
-Sign up at [coinversaa.ai](https://coinversaa.ai) and generate a key from **Settings > API Keys**.
+Request an API key at [coinversaa.ai/developers](https://coinversaa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
 
 ### 2. Configure Your MCP Client
 
