@@ -42,5 +42,6 @@
     "bugs": {
       "url": "https://github.com/coinversaa/mcp-server/issues"
     },
-    "license": "MIT"
+    "license": "MIT",
+    "mcpName": "io.github.coinversaa/mcp-server"
   }
