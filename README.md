@@ -135,7 +135,7 @@ Once connected, try asking your AI:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `COINVERSAA_API_KEY` | Yes | — | Your API key (starts with `cvsa_`) |
-| `COINVERSAA_API_URL` | No | `https://app.coinversaa.ai` | API base URL (override for self-hosted) |
+| `COINVERSAA_API_URL` | No | `https://staging.api.coinversaa.ai` | API base URL (will move to `api.coinversaa.ai` for production) |
 
 ## Development
 

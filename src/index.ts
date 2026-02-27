@@ -12,7 +12,8 @@ import { z } from "zod";
 
 // ─── Configuration ───────────────────────────────────────
 const API_KEY = process.env.COINVERSAA_API_KEY;
-const API_URL = process.env.COINVERSAA_API_URL || "https://app.coinversaa.ai";
+// TODO: Change default to https://api.coinversaa.ai once production API is deployed
+const API_URL = process.env.COINVERSAA_API_URL || "https://staging.api.coinversaa.ai";
 const BASE = `${API_URL}/api/public/v1`;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 2;
