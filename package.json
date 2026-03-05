@@ -43,5 +43,8 @@
       "url": "https://github.com/coinversaa/mcp-server/issues"
     },
     "license": "MIT",
-    "mcpName": "io.github.Coinversaa/mcp-server"
+    "mcpName": "io.github.Coinversaa/mcp-server",
+    "openclaw": {
+      "extensions": ["./build/index.js"]
+    }
   }
