@@ -1,6 +1,6 @@
 # Coinversaa Pulse — MCP Server
 
-<a href="https://glama.ai/mcp/servers/@Coinversaa/mcp-server"><img width="380" height="200" src="https://glama.ai/mcp/servers/@Coinversaa/mcp-server/badge" alt="Coinversaa Pulse MCP Server" /></a>
+<a href="https://glama.ai/mcp/servers"><img width="380" height="20" src="https://glama.ai/mcp/servers/badge" alt="MCP Server" /></a>
 
 Crypto intelligence for AI agents. Query 710K+ Hyperliquid wallets, 1.8B+ trades, behavioral cohorts, and live market data through any MCP-compatible client.
 
@@ -61,7 +61,9 @@ export COINVERSAA_API_KEY="cvsa_your_key_here"
 
 That's it. No cloning, no building — `npx` handles everything.
 
-## Available Tools (26)
+## Available Tools (29)
+
+All tools support an optional `useToonFormat` parameter (default: `true`) that returns data in a compact, token-efficient format optimized for AI consumption.
 
 ### Pulse — Trader Intelligence
 
@@ -90,29 +92,32 @@ That's it. No cloning, no building — `npx` handles everything.
 
 ### Pulse — Cohort Intelligence
 
-| Tool | Description |
-|------|-------------|
-| `pulse_cohort_summary` | Behavioral tier breakdown across 710K+ wallets |
-| `pulse_cohort_positions` | What money_printers / whales are holding RIGHT NOW |
-| `pulse_cohort_trades` | Every trade a cohort made in the last N minutes/hours |
-| `pulse_cohort_history` | Historical performance trends for any cohort |
+| Tool                             | Description                                           |
+|----------------------------------|-------------------------------------------------------|
+| `pulse_cohort_summary`           | Behavioral tier breakdown across 710K+ wallets        |
+| `pulse_cohort_positions`         | What money_printers / whales are holding RIGHT NOW    |
+| `pulse_cohort_trades`            | Every trade a cohort made in the last N minutes/hours |
+| `pulse_cohort_history`           | Historical performance trends for any cohort          |
+| `pulse_cohort_bias_history`      | Historical hourly bias snapshots for all cohorts      |
+| `pulse_cohort_performance_daily` | Historical daily performance stats for all cohorts    |
 
 ### Market — Live Data
 
-| Tool | Description |
-|------|-------------|
-| `market_price` | Current mark price for any symbol |
-| `market_positions` | Open positions for any wallet |
-| `market_orderbook` | Bid/ask depth for any trading pair |
+| Tool                   | Description                                              |
+|------------------------|----------------------------------------------------------|
+| `market_price`         | Current mark price for any symbol                        |
+| `market_positions`     | Open positions for any wallet                            |
+| `market_orderbook`     | Bid/ask depth for any trading pair                       |
+| `market_historical_oi` | Historical hourly open interest snapshots (notional USD) |
 
 ### Live — Real-Time Analytics
 
-| Tool | Description |
-|------|-------------|
-| `live_liquidation_heatmap` | Liquidation clusters across price levels — support/resistance signals |
-| `live_long_short_ratio` | Global or per-coin long/short ratio with optional history |
-| `live_cohort_bias` | Net long/short stance for every tier on a given coin |
-| `pulse_recent_closed_positions` | Positions just closed across all traders with entry/exit data |
+| Tool                            | Description                                                           |
+|---------------------------------|-----------------------------------------------------------------------|
+| `live_liquidation_heatmap`      | Liquidation clusters across price levels — support/resistance signals |
+| `live_long_short_ratio`         | Global or per-coin long/short ratio with optional history             |
+| `live_cohort_bias`              | Net long/short stance for every tier on a given coin                  |
+| `pulse_recent_closed_positions` | Positions just closed across all traders with entry/exit data         |
 
 ## Example Prompts
 

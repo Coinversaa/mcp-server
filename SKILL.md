@@ -1,7 +1,7 @@
 ---
 name: coinversaa-pulse
-description: "Crypto intelligence for AI agents. 26 tools for Hyperliquid trader analytics, behavioral cohorts, live market data, liquidation heatmaps, and whale tracking across 710K+ wallets and 1.8B+ trades."
-version: 0.2.1
+description: "Crypto intelligence for AI agents. 29 tools for Hyperliquid trader analytics, behavioral cohorts, live market data, liquidation heatmaps, and whale tracking across 710K+ wallets and 1.8B+ trades."
+version: 0.3.0
 author: Coinversaa <hello@coinversaa.ai>
 homepage: https://coinversaa.ai
 repository: https://github.com/coinversaa/mcp-server
@@ -90,45 +90,51 @@ export COINVERSAA_API_KEY="cvsa_your_key_here"
 openclaw skill install coinversaa-pulse
 ```
 
-## Tools (26)
+## Tools (29)
+
+All tools support a `useToonFormat` parameter (default: `true`) that returns data in a compact, token-efficient format optimized for AI consumption.
 
 ### Pulse — Trader Intelligence
 
 Use these tools when the user asks about top traders, market activity, or trading trends.
 
 - **`pulse_global_stats`** — Global Hyperliquid stats: total traders, trades, volume, PnL, data coverage period. Use when asked about overall market scale.
+  - Parameters: `useToonFormat` (optional, default: true)
 - **`pulse_market_overview`** — Full market state: 24h volume, open interest, mark prices, funding rates, 24h change for every pair. Use for broad market snapshots.
+  - Parameters: `useToonFormat` (optional, default: true)
 - **`pulse_leaderboard`** — Ranked trader leaderboard. Sort by `pnl`, `winrate`, `volume`, `score`, `risk-adjusted`, or `losers`. Filter by period (`day`/`week`/`month`/`allTime`) and minimum trades. Use when asked "who are the best traders?"
-  - Parameters: `sort`, `period`, `limit` (1-100), `minTrades`
+  - Parameters: `useToonFormat` (optional, default: true), `sort`, `period`, `limit` (1-100), `minTrades`
 - **`pulse_hidden_gems`** — Underrated high-performers most platforms miss. Filter by min win rate, PnL, trade count. Use when asked to find skilled but unknown traders.
-  - Parameters: `minWinRate`, `minPnl`, `minTrades`, `maxTrades`, `limit` (1-100)
+  - Parameters: `useToonFormat` (optional, default: true), `minWinRate`, `minPnl`, `minTrades`, `maxTrades`, `limit` (1-100)
 - **`pulse_most_traded_coins`** — Most actively traded coins ranked by volume and trade count. Use when asked "what's hot right now?"
-  - Parameters: `limit` (1-100)
+  - Parameters: `useToonFormat` (optional, default: true), `limit` (1-100)
 - **`pulse_biggest_trades`** — Biggest winning or losing trades across all of Hyperliquid. Use for sentiment analysis or when asked about major market moves.
-  - Parameters: `type` (`wins`/`losses`), `limit` (1-50), `threshold`
+  - Parameters: `useToonFormat` (optional, default: true), `type` (`wins`/`losses`), `limit` (1-50), `threshold`
 - **`pulse_recent_trades`** — Biggest trades in the last N minutes/hours sorted by absolute PnL. Use for real-time market activity.
-  - Parameters: `since` (e.g. `10m`, `1h`, `1d`), `limit` (1-100), `coin` (optional)
+  - Parameters: `useToonFormat` (optional, default: true), `since` (e.g. `10m`, `1h`, `1d`), `limit` (1-100), `coin` (optional)
 - **`pulse_token_leaderboard`** — Top traders for a specific coin. Use when asked "who are the best BTC traders?"
-  - Parameters: `coin`, `limit` (1-100)
+  - Parameters: `useToonFormat` (optional, default: true), `coin`, `limit` (1-100)
+- **`market_historical_oi`** — Historical hourly open interest snapshots (notional USD). Supports per-coin filtering or global aggregate.
+  - Parameters: `coin` (optional), `since` (max 30d), `startTime` (optional), `endTime` (optional)
 
 ### Pulse — Trader Profiles
 
 Use these tools for deep dives on specific wallets. Any tool taking `address` expects a full Ethereum address (0x + 40 hex chars).
 
 - **`pulse_trader_profile`** — Full due diligence: total PnL, trade count, win rate, volume, largest win/loss, first/last trade dates, PnL tier, size tier, profit factor. Use for "tell me about this wallet."
-  - Parameters: `address`
+  - Parameters: `useToonFormat` (optional, default: true), `address`
 - **`pulse_trader_performance`** — 30-day vs all-time comparison with trend direction (improving/declining/stable). Use for "is this trader still hot?"
-  - Parameters: `address`
+  - Parameters: `useToonFormat` (optional, default: true), `address`
 - **`pulse_trader_trades`** — Recent trades for any wallet: every buy, sell, size, price, PnL. Use for copy-trading signals or "what did this wallet trade recently?"
-  - Parameters: `address`, `since`, `limit` (1-100), `coin` (optional)
+  - Parameters: `useToonFormat` (optional, default: true), `address`, `since`, `limit` (1-100), `coin` (optional)
 - **`pulse_trader_daily_stats`** — Day-by-day PnL, trade count, win rate, volume. Use for consistency analysis or "show me their daily performance."
-  - Parameters: `address`
+  - Parameters: `useToonFormat` (optional, default: true), `address`
 - **`pulse_trader_token_stats`** — Per-coin P&L breakdown. Use when asked "which coins does this trader profit from?"
-  - Parameters: `address`
+  - Parameters: `useToonFormat` (optional, default: true), `address`
 - **`pulse_trader_closed_positions`** — Full position history: entry/exit prices, hold duration, PnL, leverage. Use for "show me their position history."
-  - Parameters: `address`, `limit` (1-200), `offset`, `coin` (optional)
+  - Parameters: `useToonFormat` (optional, default: true), `address`, `limit` (1-200), `offset`, `coin` (optional)
 - **`pulse_trader_closed_position_stats`** — Aggregate closed position stats: avg hold duration, position win rate, total closed, PnL summary. Use for "is this a scalper or swing trader?"
-  - Parameters: `address`
+  - Parameters: `useToonFormat` (optional, default: true), `address`
 
 ### Pulse — Cohort Intelligence
 
@@ -139,36 +145,41 @@ Coinversaa classifies 710K+ wallets into behavioral tiers. This is unique data n
 **Size tiers** (by volume): `leviathan`, `tidal_whale`, `whale`, `small_whale`, `apex_predator`, `dolphin`, `fish`, `shrimp`
 
 - **`pulse_cohort_summary`** — Full behavioral breakdown across all wallets. Each tier shows wallet count, avg PnL, avg win rate, total volume. Use when asked about market composition or "how do different types of traders perform?"
+  - Parameters: `useToonFormat` (optional, default: true)
 - **`pulse_cohort_positions`** — What a specific cohort is holding RIGHT NOW. Use for "what are the money_printers long on?" or whale watching.
-  - Parameters: `tierType` (`pnl`/`size`), `tier`, `limit` (1-200)
+  - Parameters: `useToonFormat` (optional, default: true), `tierType` (`pnl`/`size`), `tier`, `limit` (1-200)
 - **`pulse_cohort_trades`** — Every trade a cohort made in a time window. Use for "show me what smart_money traded in the last hour."
-  - Parameters: `tierType`, `tier`, `since`, `limit` (1-100)
+  - Parameters: `useToonFormat` (optional, default: true), `tierType`, `tier`, `since`, `limit` (1-100)
 - **`pulse_cohort_history`** — Day-by-day historical performance for a cohort. Use to spot trends like "smart_money has been increasingly bearish."
-  - Parameters: `tierType`, `tier`, `days` (1-365)
+  - Parameters: `useToonFormat` (optional, default: true), `tierType`, `tier`, `days` (1-365)
+- **`pulse_cohort_bias_history`** — Historical hourly bias snapshots for all trader cohorts. Use to track shifts in positioning.
+  - Parameters: `coin` (optional), `since` (max 30d), `startTime`, `endTime`
+- **`pulse_cohort_performance_daily`** — Historical daily performance stats for all cohorts. Use to track cohort profitability.
+  - Parameters: `since` (max 30d), `startTime`, `endTime`
 
 ### Market — Live Data
 
 Real-time market data directly from Hyperliquid.
 
 - **`market_price`** — Current mark price for any symbol. Use when asked "what's the price of BTC?"
-  - Parameters: `symbol` (e.g. BTC, ETH, SOL)
+  - Parameters: `useToonFormat` (optional, default: true), `symbol` (e.g. BTC, ETH, SOL)
 - **`market_positions`** — All open positions for any wallet with entries, sizes, unrealized PnL, leverage. Use for "what is this wallet holding?"
-  - Parameters: `address`
+  - Parameters: `useToonFormat` (optional, default: true), `address`
 - **`market_orderbook`** — Bid/ask depth for any pair. Use for liquidity analysis or "show me the ETH order book."
-  - Parameters: `symbol`, `depth` (1-50)
+  - Parameters: `useToonFormat` (optional, default: true), `symbol`, `depth` (1-50)
 
 ### Live — Real-Time Analytics
 
 Derived analytics computed in real-time.
 
 - **`live_liquidation_heatmap`** — Liquidation clusters across price levels for any coin. Use for "where are the BTC liquidation clusters?" or support/resistance analysis.
-  - Parameters: `coin`, `buckets` (10-100), `range` (1-50% around current price)
+  - Parameters: `useToonFormat` (optional, default: true), `coin`, `buckets` (10-100), `range` (1-50% around current price)
 - **`live_long_short_ratio`** — Global or per-coin long/short ratio with optional history. Use when asked about market sentiment or positioning.
-  - Parameters: `coin` (optional), `hours` (optional, 1-168 for history)
+  - Parameters: `useToonFormat` (optional, default: true), `coin` (optional), `hours` (optional, 1-168 for history)
 - **`live_cohort_bias`** — Net long/short stance for every tier on a given coin. Use when asked "are smart money traders long or short ETH?"
-  - Parameters: `coin`
+  - Parameters: `useToonFormat` (optional, default: true), `coin`
 - **`pulse_recent_closed_positions`** — Positions just closed across all traders. Filterable by coin, size, and hold duration. Use to find HFT trades (`maxDuration=1000`), large exits (`minNotional=100000`), or recent stop-outs.
-  - Parameters: `since`, `limit` (1-200), `coin`, `minNotional`, `minDuration`, `maxDuration`
+  - Parameters: `useToonFormat` (optional, default: true), `since`, `limit` (1-200), `coin`, `minNotional`, `minDuration`, `maxDuration`
 
 ## Example Prompts
 
