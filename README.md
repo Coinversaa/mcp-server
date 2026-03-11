@@ -1,6 +1,6 @@
 # Coinversaa Pulse — MCP Server
 
-<a href="https://glama.ai/mcp/servers"><img width="380" height="20" src="https://glama.ai/mcp/servers/badge" alt="MCP Server" /></a>
+<a href="https://glama.ai/mcp/servers/Coinversaa/mcp-server"><img width="380" height="20" src="https://glama.ai/mcp/servers/Coinversaa/mcp-server/badge" alt="MCP Server" /></a>
 
 Crypto intelligence for AI agents. Query 710K+ Hyperliquid wallets, 1.8B+ trades, behavioral cohorts, and live market data through any MCP-compatible client.
 
