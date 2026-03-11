@@ -6,11 +6,26 @@ Crypto intelligence for AI agents. Query 710K+ Hyperliquid wallets, 1.8B+ trades
 
 ## Quick Start
 
-### 1. Get an API Key
+### Option A: Free Tier (No API Key)
 
-Request an API key at [coinversaa.ai/developers](https://coinversaa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
+Try it instantly — no sign-up needed. 6 tools with rate limits:
 
-### 2. Configure Your MCP Client
+```json
+{
+  "mcpServers": {
+    "coinversaa": {
+      "command": "npx",
+      "args": ["-y", "@coinversaa/mcp-server"]
+    }
+  }
+}
+```
+
+For all 29 tools and higher rate limits, get an API key (Option B).
+
+### Option B: Full Access (API Key)
+
+Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
 
 #### Claude Desktop
 
@@ -64,6 +79,25 @@ That's it. No cloning, no building — `npx` handles everything.
 ## Available Tools (29)
 
 All tools support an optional `useToonFormat` parameter (default: `true`) that returns data in a compact, token-efficient format optimized for AI consumption.
+
+### Free Tier (No API Key Required)
+
+These 6 tools work without an API key, with IP-based rate limits:
+
+| Tool | Rate Limit | Description |
+|------|-----------|-------------|
+| `pulse_global_stats` | 10/min | Total traders, trades, volume across Hyperliquid |
+| `pulse_market_overview` | 5/min | Live prices, funding rates, OI for every pair |
+| `market_price` | 30/min | Current mark price for any symbol |
+| `market_orderbook` | 10/min | Bid/ask depth for any trading pair |
+| `pulse_most_traded_coins` | 5/min | Most actively traded coins by volume |
+| `live_long_short_ratio` | 5/min | Global or per-coin long/short ratio |
+
+Daily cap: 500 requests/day per IP.
+
+### Full Access (API Key Required — 23 additional tools)
+
+All 29 tools with 100 req/min per key. Includes trader profiles, cohort intelligence, closed positions, historical analytics, and more.
 
 ### Pulse — Trader Intelligence
 
@@ -139,7 +173,7 @@ Once connected, try asking your AI:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `COINVERSAA_API_KEY` | Yes | — | Your API key (starts with `cvsa_`) |
+| `COINVERSAA_API_KEY` | No | — | Your API key (starts with `cvsa_`). Without it, only 6 free tools are available. |
 | `COINVERSAA_API_URL` | No | `https://staging.api.coinversaa.ai` | API base URL (will move to `api.coinversaa.ai` for production) |
 
 ## Development

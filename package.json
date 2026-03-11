@@ -1,6 +1,6 @@
 {
     "name": "@coinversaa/mcp-server",
-    "version": "0.3.1",
+    "version": "0.4.0",
     "description": "Coinversaa Pulse — Crypto intelligence MCP server for AI agents. 29 tools covering Hyperliquid trader analytics, cohort intelligence, live market data, and more.",
     "type": "module",
     "bin": {
