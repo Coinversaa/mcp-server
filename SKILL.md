@@ -1,8 +1,8 @@
 ---
 name: coinversaa-pulse
-description: "Crypto intelligence for AI agents. 29 tools for Hyperliquid trader analytics, behavioral cohorts, live market data, liquidation heatmaps, and whale tracking across 710K+ wallets and 1.8B+ trades."
-version: 0.3.0
-author: Coinversaa <hello@coinversaa.ai>
+description: "Crypto intelligence for AI agents. 6 free tools + 23 premium tools for Hyperliquid trader analytics, behavioral cohorts, live market data, liquidation heatmaps, and whale tracking across 710K+ wallets and 1.8B+ trades."
+version: 0.4.0
+author: Coinversaa <chat@coinversaa.ai>
 homepage: https://coinversaa.ai
 repository: https://github.com/coinversaa/mcp-server
 license: MIT
@@ -18,8 +18,8 @@ tags:
   - mcp
 env:
   COINVERSAA_API_KEY:
-    description: "Your Coinversaa API key (starts with cvsa_). Get one at https://coinversaa.ai/developers"
-    required: true
+    description: "Your Coinversaa API key (starts with cvsa_). Get one at https://coinversaa.ai/developers. Optional — 6 tools available without a key."
+    required: false
   COINVERSAA_API_URL:
     description: "API base URL (defaults to https://staging.api.coinversaa.ai)"
     required: false
@@ -33,17 +33,35 @@ This is not a wrapper around a public blockchain API. Coinversaa indexes Hyperli
 
 ## Setup
 
-### 1. Get an API Key
+### Option A: Free Tier (No API Key)
 
-Request one at [coinversaa.ai/developers](https://coinversaa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
+Try it instantly — no sign-up needed. 6 tools with rate limits:
 
-### 2. Install
+| Free Tool | Rate Limit |
+|-----------|-----------|
+| `pulse_global_stats` | 10/min |
+| `pulse_market_overview` | 5/min |
+| `market_price` | 30/min |
+| `market_orderbook` | 10/min |
+| `pulse_most_traded_coins` | 5/min |
+| `live_long_short_ratio` | 5/min |
 
-```bash
-npx -y @coinversaa/mcp-server@latest
+Daily cap: 500 requests/day per IP.
+
+```json
+{
+  "mcpServers": {
+    "coinversaa": {
+      "command": "npx",
+      "args": ["-y", "@coinversaa/mcp-server"]
+    }
+  }
+}
 ```
 
-### 3. Configure
+### Option B: Full Access (API Key — 29 tools)
+
+Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) — unlocks all 29 tools with higher rate limits (100 req/min, no daily cap).
 
 **Claude Desktop** — edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -90,7 +108,7 @@ export COINVERSAA_API_KEY="cvsa_your_key_here"
 openclaw skill install coinversaa-pulse
 ```
 
-## Tools (29)
+## Tools (29 total — 6 free, 23 require API key)
 
 All tools support a `useToonFormat` parameter (default: `true`) that returns data in a compact, token-efficient format optimized for AI consumption.
 
@@ -211,10 +229,16 @@ Once connected, try asking your AI:
 
 ## Rate Limits
 
-Default: 100 requests/minute per API key. Rate limit headers are included in every response:
+**Free tier:** Per-route limits (5-30/min) + 500 requests/day per IP. See the table in Setup for details.
+
+**Paid tier (API key):** 100 requests/minute, no daily cap.
+
+Rate limit headers are included in every response:
 - `X-RateLimit-Limit`: your configured limit
 - `X-RateLimit-Remaining`: requests left in current window
 - `X-RateLimit-Reset`: seconds until window resets
+- `X-RateLimit-Tier`: `free` or `paid`
+- `X-RateLimit-Daily-Remaining`: (free tier only) requests left today
 
 ## Links
 
