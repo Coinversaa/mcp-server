@@ -780,11 +780,89 @@ if (shouldRegister("pulse_cohort_performance_daily")) server.tool(
   }
 );
 
+// ══════════════════════════════════════════════════════════
+// TOOL 27: Open Interest History                       [NEW]
+// ══════════════════════════════════════════════════════════
+server.tool(
+  "live_oi_history",
+  "Get historical open interest data for any coin on Hyperliquid, or global OI across all coins. Hourly snapshots showing how OI has changed over time. Essential for identifying accumulation/distribution phases, market conviction shifts, and correlating OI changes with price moves. Default 7 days, max 30 days.",
+  {
+    useToonFormat: useToonFormatSchema,
+    coin: z.string().optional().describe("Coin symbol (e.g. BTC, ETH, SOL). Omit for global OI across all coins."),
+    hours: z.number().min(1).max(720).default(168).describe("Number of hours of history (default 168 = 7 days, max 720 = 30 days)"),
+  },
+  async ({ useToonFormat, coin, hours }) => {
+    if (coin) {
+      return toolResult(await callAPI(useToonFormat, `/live/oi-history/${coin.toUpperCase()}`, { hours: String(hours) }));
+    }
+    return toolResult(await callAPI(useToonFormat, "/live/oi-history", { hours: String(hours) }));
+  }
+);
+
+// ══════════════════════════════════════════════════════════
+// TOOL 28: Cohort Bias History                         [NEW]
+// ══════════════════════════════════════════════════════════
+server.tool(
+  "live_cohort_bias_history",
+  "Get historical cohort bias data for a specific coin. See how smart_money, money_printers, whales, etc. have shifted between long and short over time. Hourly snapshots of each tier's net bias. Use to spot when smart money started accumulating or exiting. Specify a single tier for focused analysis, or omit tier for all tiers comparison.",
+  {
+    useToonFormat: useToonFormatSchema,
+    coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL)"),
+    tierType: z.enum(["pnl", "size"]).default("pnl").describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers"),
+    tier: tierSchema.optional().describe("Specific tier to track. Omit for all tiers in the category."),
+    hours: z.number().min(1).max(720).default(168).describe("Number of hours of history (default 168 = 7 days, max 720 = 30 days)"),
+  },
+  async ({ useToonFormat, coin, tierType, tier, hours }) => {
+    const params: Record<string, string> = { hours: String(hours), tierType };
+    if (tier) params.tier = tier;
+    return toolResult(await callAPI(useToonFormat, `/live/cohort-bias-history/${coin.toUpperCase()}`, params));
+  }
+);
+
+// ══════════════════════════════════════════════════════════
+// TOOL 29: Recent Liquidations                         [NEW]
+// ══════════════════════════════════════════════════════════
+server.tool(
+  "pulse_recent_liquidations",
+  "Get recent liquidations from Hyperliquid. Returns liquidation events with details on liquidated users, coins, sizes, prices, and closed PnL. Filter by time window, coin, or specific liquidated user. Useful for tracking forced liquidations and market stress events. There are typically 40-80k liquidations per week, filter by user to get the most out of limit.",
+  {
+    useToonFormat: useToonFormatSchema,
+    since: sinceSchema.default("1h"),
+    limit: z.number().min(1).max(10_000).default(50).describe("Number of liquidations to return"),
+    coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER)"),
+    liquidatedUser: ethAddressSchema.optional().describe("Filter by specific liquidated user address (0x...)"),
+  },
+  async ({ useToonFormat, since, limit, coin, liquidatedUser }) => {
+    const params: Record<string, string> = { since, limit: String(limit) };
+    if (coin) params.coin = normalizeCoin(coin);
+    if (liquidatedUser) params.liquidatedUser = liquidatedUser;
+    return toolResult(await callAPI(useToonFormat, "/pulse/liquidations/recent", params));
+  }
+);
+
+// ══════════════════════════════════════════════════════════
+// TOOL 30: Recent prices                               [NEW]
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("pulse_candles_recent")) server.registerTool(
+  "pulse_candles_recent",
+  {
+    description: "Get market prices with open, high, low, close, volume, and trade count on a given interval. ",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      symbol: z.string().min(1).max(20).describe("Trading pair symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN format (e.g. xyz:SILVER, km:OIL, cash:TSLA)"),
+      interval: z.enum(['1m']),
+    },
+  },
+  async ({ useToonFormat, symbol, ...params }) => toolResult(
+    await callAPI(useToonFormat, `/pulse/market/candles/recent/${normalizeCoin(symbol)}`, params)
+  )
+);
+
 // ─── Start Server ────────────────────────────────────────
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  const toolCount = API_KEY ? 30 : FREE_TIER_TOOLS.size;
+  const toolCount = API_KEY ? 31 : FREE_TIER_TOOLS.size;
   console.error(`Coinversaa Pulse MCP server running on stdio (${toolCount} tools, ${API_KEY ? 'full access' : 'free tier'})`);
 }
 

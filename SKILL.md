@@ -1,6 +1,6 @@
 ---
 name: coinversaa-pulse
-description: "Crypto intelligence for AI agents. 7 free tools + 23 premium tools for Hyperliquid trader analytics, behavioral cohorts, live market data, builder dex markets (commodities, stocks, indices), liquidation heatmaps, and whale tracking across 710K+ wallets, 1.8B+ trades, and 369+ markets."
+description: "Crypto intelligence for AI agents. 7 free tools + 24 premium tools for Hyperliquid trader analytics, behavioral cohorts, live market data, builder dex markets (commodities, stocks, indices), liquidation heatmaps, and whale tracking across 710K+ wallets, 1.8B+ trades, and 369+ markets."
 version: 0.4.1
 author: Coinversaa <chat@coinversaa.ai>
 homepage: https://coinversaa.ai
@@ -65,7 +65,7 @@ Daily cap: 500 requests/day per IP.
 }
 ```
 
-### Option B: Full Access (API Key — 30 tools)
+### Option B: Full Access (API Key — 31 tools)
 
 Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) — unlocks all 30 tools with higher rate limits (100 req/min, no daily cap).
 
@@ -135,7 +135,7 @@ Hyperliquid supports multiple builder dexes beyond the native perps exchange. Ea
 
 Use the `list_markets` tool to discover all available symbols and which dex they belong to.
 
-## Tools (30 total — 7 free, 23 require API key)
+## Tools (31 total — 8 free, 23 require API key)
 
 ### Pulse — Trader Intelligence
 
@@ -160,6 +160,8 @@ Use these tools when the user asks about top traders, market activity, or tradin
   - Parameters: `coin`, `limit` (1-100)
 - **`market_historical_oi`** — Historical hourly open interest snapshots (notional USD). Supports per-coin filtering or global aggregate.
   - Parameters: `coin` (optional), `since` (max 30d), `startTime` (optional), `endTime` (optional)
+- **`pulse_recent_liquidations`** — Recent liquidation events from Hyperliquid with liquidated users, coins, sizes, prices, closed PnL.
+  - Parameters: `since` (default: "1h"), `limit` (1-10000, default: 50), `coin` (optional), `liquidatedUser` (optional)
 
 ### Pulse — Trader Profiles
 
@@ -223,6 +225,8 @@ Derived analytics computed in real-time.
   - Parameters: `coin`
 - **`pulse_recent_closed_positions`** — Positions just closed across all traders. Filterable by coin, size, and hold duration.
   - Parameters: `since`, `limit` (1-200), `coin`, `minNotional`, `minDuration`, `maxDuration`
+- **`pulse_candles_recent`** — Recent OHLCV candles (1m interval) with volume and trade count for any symbol.
+  - Parameters: `symbol`, `interval` (enum: '1m')
 
 ## Example Prompts
 

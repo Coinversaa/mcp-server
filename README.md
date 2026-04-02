@@ -23,7 +23,7 @@ Try it instantly — no sign-up needed. 7 tools with rate limits:
 }
 ```
 
-For all 30 tools and higher rate limits, get an API key (Option B).
+For all 31 tools and higher rate limits, get an API key (Option B).
 
 ### Option B: Full Access (API Key)
 
@@ -99,7 +99,7 @@ Hyperliquid supports multiple builder dexes beyond the native perps exchange. Ea
 
 Use the `list_markets` tool to discover all available symbols and which dex they belong to.
 
-## Available Tools (30)
+## Available Tools (31)
 
 ### Free Tier (No API Key Required)
 
@@ -119,7 +119,7 @@ Daily cap: 500 requests/day per IP.
 
 ### Full Access (API Key Required — 23 additional tools)
 
-All 30 tools with 100 req/min per key. Includes trader profiles, cohort intelligence, closed positions, historical analytics, and more.
+All 31 tools with 100 req/min per key. Includes trader profiles, cohort intelligence, closed positions, historical analytics, and more.
 
 ### Pulse — Trader Intelligence
 
@@ -180,7 +180,10 @@ All 30 tools with 100 req/min per key. Includes trader profiles, cohort intellig
 | `live_liquidation_heatmap` | Liquidation clusters across price levels — support/resistance signals |
 | `live_long_short_ratio` | Global or per-coin long/short ratio with optional history |
 | `live_cohort_bias` | Net long/short stance for every tier on a given coin |
+| `live_oi_history` | Historical open interest for any coin or global — hourly snapshots up to 30 days |
+| `live_cohort_bias_history` | How each cohort's long/short bias evolved over time — hourly snapshots |
 | `pulse_recent_closed_positions` | Positions just closed across all traders with entry/exit data |
+| `pulse_candles_recent` | Recent OHLCV candles (1m interval) with volume and trade count for any symbol |
 
 ## Example Prompts
 
@@ -246,6 +249,8 @@ This isn't a wrapper around a public blockchain API. Coinversaa indexes Hyperliq
 - **Liquidation heatmaps**: Cluster analysis across price levels for any coin
 - **Closed position analytics**: Full position lifecycle with hold duration and entry/exit analysis
 - **Hidden gem discovery**: Find skilled traders that ranking sites miss
+- **Open interest history**: Hourly OI snapshots for any coin, up to 30 days back
+- **Cohort bias history**: Track how smart money, whales, and other tiers shifted long/short over time
 - **1.8B+ trades indexed**: The deepest Hyperliquid dataset available as an API
 
 ## Contributing
