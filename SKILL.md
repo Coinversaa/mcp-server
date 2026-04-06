@@ -1,7 +1,7 @@
 ---
 name: coinversaa-pulse
-description: "Crypto intelligence for AI agents. 7 free tools + 23 premium tools for Hyperliquid trader analytics, behavioral cohorts, live market data, builder dex markets (commodities, stocks, indices), liquidation heatmaps, and whale tracking across 710K+ wallets, 1.8B+ trades, and 369+ markets."
-version: 0.4.1
+description: "Crypto intelligence for AI agents. 7 free tools + 32 premium tools for Hyperliquid trader analytics, behavioral cohorts, syncer-backed risk data, live market data, builder dex markets (commodities, stocks, indices), liquidation heatmaps, and whale tracking across 710K+ wallets, 1.8B+ trades, and 369+ markets."
+version: 0.5.0
 author: Coinversaa <chat@coinversaa.ai>
 homepage: https://coinversaa.ai
 repository: https://github.com/coinversaa/mcp-server
@@ -65,9 +65,9 @@ Daily cap: 500 requests/day per IP.
 }
 ```
 
-### Option B: Full Access (API Key — 30 tools)
+### Option B: Full Access (API Key — 39 tools)
 
-Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) — unlocks all 30 tools with higher rate limits (100 req/min, no daily cap).
+Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) — unlocks all 39 tools with higher rate limits (100 req/min, no daily cap).
 
 **Claude Desktop** — edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -135,7 +135,32 @@ Hyperliquid supports multiple builder dexes beyond the native perps exchange. Ea
 
 Use the `list_markets` tool to discover all available symbols and which dex they belong to.
 
-## Tools (30 total — 7 free, 23 require API key)
+Backend trading note for agentic traders: Coinversaa's backend-signed Hyperliquid orders rely on an approved Hyperliquid agent wallet, not a `vaultAddress`. If the backend signer changes, it must be re-approved on Hyperliquid before orders will succeed. Builder dex orders may also require unified account mode so USDC collateral is shared across supported dexes. For isolated-only markets, omitted `marginMode` now defaults to `isolated`; do not assume `cross` is available on builder dex symbols.
+
+## Tools (39 total — 7 free, 32 require API key)
+
+## Risk Tools Freshness
+
+Syncer-backed risk tools such as `live_risk_overview`, `live_coin_risk_snapshot`, `live_coin_risk_history`, `live_mark_dislocations`, `live_recent_liquidations`, `live_liquidation_summary`, `live_oi_history`, and `live_cohort_bias_history` are best treated as **beta recent-intelligence tools**.
+
+- Best for research, LLM training, liquidation analysis, OI trend work, and crowding detection
+- Best queried over recent windows like `7d` or `30d`
+- Freshness depends on sync coverage and may lag real time
+- Do not treat them as guaranteed live execution truth or exact historical accounting
+
+## How AI Agents Use The Risk Tools
+
+These tools are useful when the user wants market-structure answers, not just raw rows.
+
+| Goal | Best tools | What they help answer |
+|------|------------|-----------------------|
+| Detect risk now | `live_risk_overview`, `live_coin_risk_snapshot` | "What looks fragile right now?", "Is this coin crowded?", "Who is holding the risk?" |
+| Explain recent stress | `live_recent_liquidations`, `live_liquidation_summary`, `live_mark_dislocations` | "What got liquidated?", "Did basis stress show up before the unwind?", "Was this move liquidation-driven?" |
+| Track regime change | `live_coin_risk_history`, `live_oi_history`, `live_cohort_bias_history` | "Did OI build into this move?", "Did smart money rotate early?", "How did the setup change over the last month?" |
+
+For agent UX, prefer recent windows like `7d` or `30d` and summarize outputs in plain language instead of dumping all rows unless the user asks for raw detail.
+
+For `market_recent_candles`, keep requests short and recent. The MCP tool intentionally caps one-minute candle responses at 720 rows (12h) so agents do not pull massive minute-bar dumps in a single call.
 
 ### Pulse — Trader Intelligence
 
@@ -160,6 +185,8 @@ Use these tools when the user asks about top traders, market activity, or tradin
   - Parameters: `coin`, `limit` (1-100)
 - **`market_historical_oi`** — Historical hourly open interest snapshots (notional USD). Supports per-coin filtering or global aggregate.
   - Parameters: `coin` (optional), `since` (max 30d), `startTime` (optional), `endTime` (optional)
+- **`market_recent_candles`** — Recent 1-minute candles for a market. Useful for short intraday structure checks, recent momentum, and micro-pullback analysis. Intentionally capped to the last 12 hours to keep MCP responses practical.
+  - Parameters: `symbol`, `limit` (1-720)
 
 ### Pulse — Trader Profiles
 
@@ -217,10 +244,25 @@ Derived analytics computed in real-time.
 
 - **`live_liquidation_heatmap`** — Liquidation clusters across price levels for any coin.
   - Parameters: `coin`, `buckets` (10-100), `range` (1-50% around current price)
+- **`live_risk_overview`** — Exchange-wide risk snapshot: OI, leverage, crowding concentration, near-liquidation exposure, and 7-day liquidation totals.
+- **`live_coin_risk_snapshot`** — Current risk snapshot for a single coin: OI, wallet count, concentration, top positions, liquidation heatmap, and recent liquidations.
+  - Parameters: `coin`
+- **`live_coin_risk_history`** — Historical risk lane for a coin: OI, long/short, cohort rotation, candles, dislocations, and liquidation flow.
+  - Parameters: `coin`, `hours` (1-720)
+- **`live_mark_dislocations`** — Historical mark/oracle dislocation series for a coin with mark price, oracle price, and basis percentage.
+  - Parameters: `coin`, `hours` (1-720)
+- **`live_recent_liquidations`** — Real liquidation events from the syncer with wallet, coin, penalty fee, and closed PnL.
+  - Parameters: `since`, `coin` (optional), `limit` (1-200)
+- **`live_liquidation_summary`** — Aggregated liquidation stats over a window with by-coin rollups and timeline buckets.
+  - Parameters: `since`, `coin` (optional)
 - **`live_long_short_ratio`** — Global or per-coin long/short ratio with optional history.
   - Parameters: `coin` (optional), `hours` (optional, 1-168 for history)
 - **`live_cohort_bias`** — Net long/short stance for every tier on a given coin.
   - Parameters: `coin`
+- **`live_oi_history`** — Historical open interest for any coin or global, using hourly snapshots up to 30 days.
+  - Parameters: `coin` (optional), `hours` (1-720)
+- **`live_cohort_bias_history`** — Historical hourly long/short bias shifts for a specific coin across all cohorts or a single tier.
+  - Parameters: `coin`, `tierType`, `tier` (optional), `hours` (1-720)
 - **`pulse_recent_closed_positions`** — Positions just closed across all traders. Filterable by coin, size, and hold duration.
   - Parameters: `since`, `limit` (1-200), `coin`, `minNotional`, `minDuration`, `maxDuration`
 
@@ -234,6 +276,10 @@ Once connected, try asking your AI:
 - "Find underrated traders with 70%+ win rate"
 - "Do a deep dive on wallet 0x7fda...7d1 — are they still performing?"
 - "Where are the BTC liquidation clusters?"
+- "Show me the exchange-wide risk overview on Hyperliquid this week"
+- "Which coin looks the most crowded right now?"
+- "Show me ETH liquidation events from the last 7 days"
+- "Give me BTC risk history with OI, liquidations, and cohort rotation"
 - "Are smart money traders long or short ETH right now?"
 - "What coins are most actively traded right now?"
 - "Show me the biggest losses in the last 24 hours"

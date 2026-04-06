@@ -27,7 +27,7 @@ const FREE_TIER_TOOLS = new Set([
     'live_long_short_ratio',
 ]);
 if (!API_KEY) {
-    console.error("WARNING: COINVERSAA_API_KEY not set. Only free-tier tools will be available (7 of 30). Get a key at https://coinversaa.ai/developers");
+    console.error("WARNING: COINVERSAA_API_KEY not set. Only free-tier tools will be available (7 of 39). Get a key at https://coinversaa.ai/developers");
 }
 function shouldRegister(toolName) {
     if (API_KEY)
@@ -145,6 +145,7 @@ DATA COVERAGE:
 - 710K+ tracked Hyperliquid wallets classified into behavioral cohorts
 - 1.8B+ indexed trades with full PnL attribution
 - Real-time positions, liquidation heatmaps, and market data
+- Syncer-backed risk routes for crowding, real liquidation events, and weekly market stress
 
 MARKETS:
 Hyperliquid has native perpetuals (BTC, ETH, SOL, etc.) plus 7 builder dexes — independent perp exchanges built on top of Hyperliquid, each with their own collateral token and market listings.
@@ -176,7 +177,7 @@ TIPS:
 - The list_markets tool accepts an optional dex filter to narrow results`;
 const server = new McpServer({
     name: "coinversaa-pulse",
-    version: "0.4.1",
+    version: "0.5.0",
 }, {
     instructions: SERVER_INSTRUCTIONS,
 });
@@ -388,7 +389,100 @@ if (shouldRegister("live_liquidation_heatmap"))
         range: String(range),
     })));
 // ══════════════════════════════════════════════════════════
-// TOOL 15: Long/Short Ratio                         [FREE]
+// TOOL 15: Market Risk Overview
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("live_risk_overview"))
+    server.registerTool("live_risk_overview", {
+        description: "Get the exchange-wide market risk snapshot. Best for questions like 'what looks fragile right now?' or 'which coins are most crowded?'. Returns total open interest, leverage, crowding concentration, near-liquidation exposure, 7-day liquidation totals, and the top coins where positioning looks most fragile.",
+        inputSchema: {
+            useToonFormat: useToonFormatSchema,
+        },
+    }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/live/risk/overview")));
+// ══════════════════════════════════════════════════════════
+// TOOL 16: Coin Risk Snapshot
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("live_coin_risk_snapshot"))
+    server.registerTool("live_coin_risk_snapshot", {
+        description: "Get the current risk snapshot for a single coin. Use this when a user asks 'is BTC crowded?', 'who is holding the risk?', or 'how liquidation-prone is this market right now?'. Returns OI, wallet count, long/short posture, position-size concentration, top positions, liquidation heatmap, and 7-day liquidation totals.",
+        inputSchema: {
+            useToonFormat: useToonFormatSchema,
+            coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN (e.g. xyz:GOLD, km:OIL, cash:TSLA)"),
+        },
+    }, async ({ useToonFormat, coin }) => toolResult(await callAPI(useToonFormat, `/live/risk/coins/${normalizeCoin(coin)}`)));
+// ══════════════════════════════════════════════════════════
+// TOOL 17: Coin Risk History
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("live_coin_risk_history"))
+    server.registerTool("live_coin_risk_history", {
+        description: "Get the historical risk lane for a coin. Best for questions like 'how did this setup become fragile?' or 'did smart money rotate before the move?'. Returns hourly OI, long/short history, cohort rotation, candle data, mark/oracle dislocation history when available, and liquidation counts over time.",
+        inputSchema: {
+            useToonFormat: useToonFormatSchema,
+            coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN"),
+            hours: z.number().min(1).max(720).default(168).describe("Number of hours of history to return (default 168 = 7 days, max 720 = 30 days)"),
+        },
+    }, async ({ useToonFormat, coin, hours }) => toolResult(await callAPI(useToonFormat, `/live/risk/coins/${normalizeCoin(coin)}/history`, { hours: String(hours) })));
+// ══════════════════════════════════════════════════════════
+// TOOL 18: Mark Dislocations
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("live_mark_dislocations"))
+    server.registerTool("live_mark_dislocations", {
+        description: "Get historical mark/oracle dislocation data for a coin. Use this to answer questions like 'did basis stress or oracle drift show up before liquidations?'. Returns timestamped mark price, oracle price, and basis percentage over the last 30 days.",
+        inputSchema: {
+            useToonFormat: useToonFormatSchema,
+            coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN"),
+            hours: z.number().min(1).max(720).default(168).describe("Number of hours of history to return (default 168 = 7 days, max 720 = 30 days)"),
+        },
+    }, async ({ useToonFormat, coin, hours }) => {
+        const history = await callAPI(false, `/live/risk/coins/${normalizeCoin(coin)}/history`, { hours: String(hours) });
+        const result = {
+            success: history.success,
+            coin: history.coin,
+            hours: history.hours,
+            count: Array.isArray(history.markDislocations) ? history.markDislocations.length : 0,
+            markDislocations: history.markDislocations || [],
+            availability: history.availability,
+            freshness: history.freshness,
+            generatedAt: history.generatedAt,
+        };
+        return toolResult(useToonFormat ? toonEncode(result) : result);
+    });
+// ══════════════════════════════════════════════════════════
+// TOOL 19: Recent Liquidations
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("live_recent_liquidations"))
+    server.registerTool("live_recent_liquidations", {
+        description: "Get real liquidation events from the syncer. Best for questions like 'where did forced unwind activity actually hit?' or 'show me BTC liquidations over the last 30 days'. Returns wallet, coin, penalty fee, and closed PnL.",
+        inputSchema: {
+            useToonFormat: useToonFormatSchema,
+            since: sinceSchema.default("7d"),
+            coin: z.string().optional().describe("Optional coin filter (e.g. BTC, ETH, SOL or builder dex prefix:COIN)"),
+            limit: z.number().min(1).max(200).default(50).describe("Number of liquidation events to return"),
+        },
+    }, async ({ useToonFormat, since, coin, limit }) => {
+        const params = { since, limit: String(limit) };
+        if (coin)
+            params.coin = normalizeCoin(coin);
+        return toolResult(await callAPI(useToonFormat, "/live/risk/liquidations/recent", params));
+    });
+// ══════════════════════════════════════════════════════════
+// TOOL 20: Liquidation Summary
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("live_liquidation_summary"))
+    server.registerTool("live_liquidation_summary", {
+        description: "Get an aggregated liquidation summary over a time window. This is the best liquidation tool for summaries, rankings, and trend analysis. Returns event count, penalty fees, closed PnL, per-coin rollups, and a liquidation timeline.",
+        inputSchema: {
+            useToonFormat: useToonFormatSchema,
+            since: sinceSchema.default("7d"),
+            coin: z.string().optional().describe("Optional coin filter (e.g. BTC, ETH, SOL or builder dex prefix:COIN)"),
+        },
+    }, async ({ useToonFormat, since, coin }) => {
+        const params = { since };
+        if (coin)
+            params.coin = normalizeCoin(coin);
+        return toolResult(await callAPI(useToonFormat, "/live/risk/liquidations/summary", params));
+    });
+// ══════════════════════════════════════════════════════════
+// TOOL 20: Long/Short Ratio                         [FREE]
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_long_short_ratio"))
     server.registerTool("live_long_short_ratio", {
@@ -598,7 +692,19 @@ if (shouldRegister("market_historical_oi"))
         return toolResult(await callAPI(useToonFormat, "/market/historical-oi", params));
     });
 // ══════════════════════════════════════════════════════════
-// TOOL 28: Cohort Bias History
+// TOOL 28: Recent 1m Candles
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("market_recent_candles"))
+    server.registerTool("market_recent_candles", {
+        description: "Get recent 1-minute candle history for a market. Best for short intraday structure checks, recent momentum, and micro-pullback analysis. This MCP tool is intentionally capped to the most recent 12 hours so agents do not fetch huge minute-bar dumps in one call.",
+        inputSchema: {
+            useToonFormat: useToonFormatSchema,
+            symbol: z.string().min(1).max(20).describe("Market symbol (e.g. BTC, ETH, SOL, xyz:GOLD, cash:TSLA)"),
+            limit: z.number().min(1).max(720).default(240).describe("Number of 1-minute candles to return. Capped at 720 candles (12h) to keep MCP responses practical."),
+        },
+    }, async ({ useToonFormat, symbol, limit }) => toolResult(await callAPI(useToonFormat, `/pulse/market/candles/recent/${normalizeCoin(symbol)}`, { interval: "1m", limit: String(limit) })));
+// ══════════════════════════════════════════════════════════
+// TOOL 29: Cohort Bias History
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_cohort_bias_history"))
     server.tool("pulse_cohort_bias_history", "Get historical hourly bias snapshots for all trader cohorts. Returns net long/short notional and account counts per tier. Use this to see how different groups (whales, smart money) have shifted their positioning over time. Supports per-coin or global aggregate. Max range is 30 days.", {
@@ -620,7 +726,7 @@ if (shouldRegister("pulse_cohort_bias_history"))
         return toolResult(await callAPI(useToonFormat, "/pulse/cohort-bias/history", params));
     });
 // ══════════════════════════════════════════════════════════
-// TOOL 29: Cohort Daily Performance Stats
+// TOOL 30: Cohort Daily Performance Stats
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_cohort_performance_daily"))
     server.tool("pulse_cohort_performance_daily", "Get historical daily performance statistics for all trader cohorts. Returns PnL, volume, trade counts, and active trader counts per tier. Use this to track the consistency and profitability of different groups over time. Max range is 30 days.", {
@@ -638,11 +744,47 @@ if (shouldRegister("pulse_cohort_performance_daily"))
             params.endTime = endTime;
         return toolResult(await callAPI(useToonFormat, "/pulse/cohorts/daily-stats", params));
     });
+// ══════════════════════════════════════════════════════════
+// TOOL 37: Open Interest History
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("live_oi_history"))
+    server.registerTool("live_oi_history", {
+        description: "Get historical open interest data for any coin on Hyperliquid, or global OI across all coins. Best for identifying accumulation/distribution phases, market conviction shifts, and whether a move was backed by positioning. Default 7 days, max 30 days.",
+        inputSchema: {
+            useToonFormat: useToonFormatSchema,
+            coin: z.string().optional().describe("Coin symbol (e.g. BTC, ETH, SOL). Omit for global OI across all coins."),
+            hours: z.number().min(1).max(720).default(168).describe("Number of hours of history (default 168 = 7 days, max 720 = 30 days)"),
+        },
+    }, async ({ useToonFormat, coin, hours }) => {
+        if (coin) {
+            return toolResult(await callAPI(useToonFormat, `/live/oi-history/${coin.toUpperCase()}`, { hours: String(hours) }));
+        }
+        return toolResult(await callAPI(useToonFormat, "/live/oi-history", { hours: String(hours) }));
+    });
+// ══════════════════════════════════════════════════════════
+// TOOL 38: Cohort Bias History
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("live_cohort_bias_history"))
+    server.registerTool("live_cohort_bias_history", {
+        description: "Get historical cohort bias data for a specific coin. Use this when a user asks 'were smart-money cohorts accumulating or exiting?' or 'which tier flipped first?'. Returns hourly net-bias snapshots for each tier or for a specific tier over time.",
+        inputSchema: {
+            useToonFormat: useToonFormatSchema,
+            coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL)"),
+            tierType: z.enum(["pnl", "size"]).default("pnl").describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers"),
+            tier: tierSchema.optional().describe("Specific tier to track. Omit for all tiers in the category."),
+            hours: z.number().min(1).max(720).default(168).describe("Number of hours of history (default 168 = 7 days, max 720 = 30 days)"),
+        },
+    }, async ({ useToonFormat, coin, tierType, tier, hours }) => {
+        const params = { hours: String(hours), tierType };
+        if (tier)
+            params.tier = tier;
+        return toolResult(await callAPI(useToonFormat, `/live/cohort-bias-history/${coin.toUpperCase()}`, params));
+    });
 // ─── Start Server ────────────────────────────────────────
 async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    const toolCount = API_KEY ? 30 : FREE_TIER_TOOLS.size;
+    const toolCount = API_KEY ? 37 : FREE_TIER_TOOLS.size;
     console.error(`Coinversaa Pulse MCP server running on stdio (${toolCount} tools, ${API_KEY ? 'full access' : 'free tier'})`);
 }
 main().catch((error) => {
