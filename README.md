@@ -1,4 +1,4 @@
-# Coinversaa Pulse — MCP Server
+# Coinversa Pulse — MCP Server
 
 <a href="https://glama.ai/mcp/servers/Coinversaa/mcp-server"><img src="https://glama.ai/mcp/servers/Coinversaa/mcp-server/badge" alt="MCP Server" /></a>
 
@@ -15,7 +15,7 @@ Try it instantly — no sign-up needed. 7 tools with rate limits:
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
+    "coinversa": {
       "command": "npx",
       "args": ["-y", "@coinversaa/mcp-server"]
     }
@@ -23,11 +23,11 @@ Try it instantly — no sign-up needed. 7 tools with rate limits:
 }
 ```
 
-For all 39 tools and higher rate limits, get an API key (Option B).
+For all 38 tools and higher rate limits, get an API key (Option B).
 
 ### Option B: Full Access (API Key)
 
-Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
+Get a key at [coinversa.ai/developers](https://coinversa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
 
 #### Claude Desktop
 
@@ -36,11 +36,11 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac) or 
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
+    "coinversa": {
       "command": "npx",
       "args": ["-y", "@coinversaa/mcp-server"],
       "env": {
-        "COINVERSAA_API_KEY": "cvsa_your_key_here"
+        "COINVERSA_API_KEY": "cvsa_your_key_here"
       }
     }
   }
@@ -54,11 +54,11 @@ Add to `.cursor/mcp.json` in your project root:
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
+    "coinversa": {
       "command": "npx",
       "args": ["-y", "@coinversaa/mcp-server"],
       "env": {
-        "COINVERSAA_API_KEY": "cvsa_your_key_here"
+        "COINVERSA_API_KEY": "cvsa_your_key_here"
       }
     }
   }
@@ -68,12 +68,12 @@ Add to `.cursor/mcp.json` in your project root:
 #### Claude Code
 
 ```bash
-claude mcp add coinversaa -- npx -y @coinversaa/mcp-server
+claude mcp add coinversa -- npx -y @coinversaa/mcp-server
 ```
 
 Set the env var in your shell:
 ```bash
-export COINVERSAA_API_KEY="cvsa_your_key_here"
+export COINVERSA_API_KEY="cvsa_your_key_here"
 ```
 
 That's it. No cloning, no building — `npx` handles everything.
@@ -99,8 +99,8 @@ Hyperliquid supports multiple builder dexes beyond the native perps exchange. Ea
 
 Use the `list_markets` tool to discover all available symbols and which dex they belong to.
 
-Backend trading note for agentic traders: Coinversaa's backend-signed Hyperliquid orders use an approved Hyperliquid agent wallet, not a `vaultAddress`. If the backend signer changes, re-approve that signer on Hyperliquid before submitting orders. Builder dex orders may also require unified account mode so USDC collateral is shared across supported dexes. For isolated-only markets, omitted `marginMode` now defaults to `isolated`; do not assume `cross` is available on builder dex symbols.
-Frontend account-mode note: the app can now prepare a user-signed abstraction change via `POST /api/v1/hyperliquid/prepare-abstraction`, which lets the user enable or disable Unified Account mode without leaving Coinversaa. Hyperliquid may still reject a transition for exchange-side reasons.
+Backend trading note for agentic traders: Coinversa's backend-signed Hyperliquid orders use an approved Hyperliquid agent wallet, not a `vaultAddress`. If the backend signer changes, re-approve that signer on Hyperliquid before submitting orders. Builder dex orders may also require unified account mode so USDC collateral is shared across supported dexes. For isolated-only markets, omitted `marginMode` now defaults to `isolated`; do not assume `cross` is available on builder dex symbols.
+Frontend account-mode note: the app can now prepare a user-signed abstraction change via `POST /api/v1/hyperliquid/prepare-abstraction`, which lets the user enable or disable Unified Account mode without leaving Coinversa. Hyperliquid may still reject a transition for exchange-side reasons.
 
 ## Available Tools (39)
 
@@ -120,9 +120,9 @@ These 7 tools work without an API key, with IP-based rate limits:
 
 Daily cap: 500 requests/day per IP.
 
-### Full Access (API Key Required — 32 additional tools)
+### Full Access (API Key Required — 38 additional tools)
 
-All 39 tools with 100 req/min per key. Includes trader profiles, cohort intelligence, syncer-backed risk routes, closed positions, historical analytics, and more.
+All 38 tools with 100 req/min per key. Includes trader profiles, cohort intelligence, syncer-backed risk routes, closed positions, historical analytics, and more.
 
 ### Risk Tools Freshness
 
@@ -249,10 +249,10 @@ Once connected, try asking your AI:
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `COINVERSAA_API_KEY` | No | — | Your API key (starts with `cvsa_`). Without it, only 7 free tools are available. |
-| `COINVERSAA_API_URL` | No | `https://staging.api.coinversaa.ai` | API base URL (will move to `api.coinversaa.ai` for production) |
+| Variable            | Required | Default                    | Description                                                                      |
+|---------------------|----------|----------------------------|----------------------------------------------------------------------------------|
+| `COINVERSA_API_KEY` | No       | —                          | Your API key (starts with `cvsa_`). Without it, only 7 free tools are available. |
+| `COINVERSA_API_URL` | No       | `https://api.coinversa.ai` | API base URL                                                                     |
 
 ## Rate Limits
 
@@ -281,7 +281,7 @@ npx @modelcontextprotocol/inspector build/index.js
 
 ## What Makes This Different
 
-This isn't a wrapper around a public blockchain API. Coinversaa indexes Hyperliquid's clearinghouse directly and computes analytics that don't exist anywhere else:
+This isn't a wrapper around a public blockchain API. Coinversa indexes Hyperliquid's clearinghouse directly and computes analytics that don't exist anywhere else:
 
 - **Builder dex markets**: Access 369+ markets across 8 dexes — commodities, stocks, indices, and perps
 - **Behavioral cohorts**: 710K wallets classified into PnL tiers (money_printer to giga_rekt) and size tiers (leviathan to shrimp)
@@ -304,4 +304,4 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 
 ---
 
-Built by [Coinversaa](https://coinversaa.ai)
+Built by [Coinversa](https://coinversa.ai)
