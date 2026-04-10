@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-// Coinversaa Pulse MCP Server
+// Coinversa Pulse MCP Server
 // Exposes crypto intelligence tools to AI agents via Model Context Protocol
 //
 // Usage with Claude Desktop / Cursor / Claude Code:
-//   Set COINVERSAA_API_KEY and COINVERSAA_API_URL in your MCP config
+//   Set COINVERSA_API_KEY and COINVERSA_API_URL in your MCP config
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -13,9 +13,8 @@ import { encode as toonEncode } from '@toon-format/toon'
 import { z } from "zod";
 
 // ─── Configuration ───────────────────────────────────────
-const API_KEY = process.env.COINVERSAA_API_KEY;
-// TODO: Change default to https://api.coinversaa.ai once production API is deployed
-const API_URL = process.env.COINVERSAA_API_URL || "https://staging.api.coinversaa.ai";
+const API_KEY = process.env.COINVERSA_API_KEY || process.env.COINVERSAA_API_KEY;
+const API_URL = process.env.COINVERSA_API_URL || process.env.COINVERSAA_API_URL || "https://api.coinversa.ai";
 const BASE = `${API_URL}/api/public/v1`;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 2;
@@ -33,7 +32,7 @@ const FREE_TIER_TOOLS = new Set([
 ]);
 
 if (!API_KEY) {
-  console.error("WARNING: COINVERSAA_API_KEY not set. Only free-tier tools will be available (7 of 39). Get a key at https://coinversaa.ai/developers");
+  console.error("WARNING: COINVERSA_API_KEY not set. Only free-tier tools will be available (7 of 39). Get a key at https://coinversa.ai/developers");
 }
 
 function shouldRegister(toolName: string): boolean {
@@ -123,7 +122,7 @@ async function callAPI(useToon: boolean, path: string, params?: Record<string, s
       }
 
       if (response.status === 401) {
-        throw new Error("Invalid API key. Check your COINVERSAA_API_KEY environment variable.");
+        throw new Error("Invalid API key. Check your COINVERSA_API_KEY environment variable.");
       }
 
       if (!response.ok) {
@@ -138,7 +137,7 @@ async function callAPI(useToon: boolean, path: string, params?: Record<string, s
       if (err.name === "AbortError") {
         lastError = new Error("Request timed out after 30 seconds. The server may be under heavy load — try again.");
       } else if (err.cause?.code === "ECONNREFUSED" || err.cause?.code === "ENOTFOUND") {
-        lastError = new Error("Cannot connect to the Coinversaa API. Check your COINVERSAA_API_URL setting and network connection.");
+        lastError = new Error("Cannot connect to the Coinversa API. Check your COINVERSA_API_URL setting and network connection.");
       } else {
         lastError = err;
       }
@@ -165,7 +164,7 @@ function toolResult(data: any) {
 }
 
 // ─── Create Server ───────────────────────────────────────
-const SERVER_INSTRUCTIONS = `Coinversaa Pulse — Crypto intelligence for AI agents.
+const SERVER_INSTRUCTIONS = `Coinversa Pulse — Crypto intelligence for AI agents.
 
 DATA COVERAGE:
 - 710K+ tracked Hyperliquid wallets classified into behavioral cohorts
@@ -260,7 +259,7 @@ if (shouldRegister("list_markets")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 3: Leaderboard
+// TOOL 4: Leaderboard
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_leaderboard")) server.registerTool(
   "pulse_leaderboard",
@@ -279,7 +278,7 @@ if (shouldRegister("pulse_leaderboard")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 4: Hidden Gems
+// TOOL 5: Hidden Gems
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_hidden_gems")) server.registerTool(
   "pulse_hidden_gems",
@@ -307,7 +306,7 @@ if (shouldRegister("pulse_hidden_gems")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 5: Cohort Summary
+// TOOL 6: Cohort Summary
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_cohort_summary")) server.registerTool(
   "pulse_cohort_summary",
@@ -319,7 +318,7 @@ if (shouldRegister("pulse_cohort_summary")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 6: Cohort Positions (What whales are doing NOW)
+// TOOL 7: Cohort Positions (What whales are doing NOW)
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_cohort_positions")) server.registerTool(
   "pulse_cohort_positions",
@@ -337,7 +336,7 @@ if (shouldRegister("pulse_cohort_positions")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 7: Trader Profile
+// TOOL 8: Trader Profile
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_trader_profile")) server.registerTool(
   "pulse_trader_profile",
@@ -352,7 +351,7 @@ if (shouldRegister("pulse_trader_profile")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 8: Trader Performance
+// TOOL 9: Trader Performance
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_trader_performance")) server.registerTool(
   "pulse_trader_performance",
@@ -367,7 +366,7 @@ if (shouldRegister("pulse_trader_performance")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 9: Price Lookup                              [FREE]
+// TOOL 10: Price Lookup                              [FREE]
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("market_price")) server.registerTool(
   "market_price",
@@ -382,7 +381,7 @@ if (shouldRegister("market_price")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 10: Wallet Positions
+// TOOL 11: Wallet Positions
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("market_positions")) server.registerTool(
   "market_positions",
@@ -397,7 +396,7 @@ if (shouldRegister("market_positions")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 11: Recent Trades (Global)
+// TOOL 12: Recent Trades (Global)
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_recent_trades")) server.registerTool(
   "pulse_recent_trades",
@@ -418,7 +417,7 @@ if (shouldRegister("pulse_recent_trades")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 12: Trader Recent Trades
+// TOOL 13: Trader Recent Trades
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_trader_trades")) server.registerTool(
   "pulse_trader_trades",
@@ -440,7 +439,7 @@ if (shouldRegister("pulse_trader_trades")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 13: Cohort Recent Trades
+// TOOL 14: Cohort Recent Trades
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_cohort_trades")) server.registerTool(
   "pulse_cohort_trades",
@@ -459,7 +458,7 @@ if (shouldRegister("pulse_cohort_trades")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 14: Liquidation Heatmap
+// TOOL 15: Liquidation Heatmap
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_liquidation_heatmap")) server.registerTool(
   "live_liquidation_heatmap",
@@ -482,7 +481,7 @@ if (shouldRegister("live_liquidation_heatmap")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 15: Market Risk Overview
+// TOOL 16: Market Risk Overview
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_risk_overview")) server.registerTool(
   "live_risk_overview",
@@ -496,7 +495,7 @@ if (shouldRegister("live_risk_overview")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 16: Coin Risk Snapshot
+// TOOL 17: Coin Risk Snapshot
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_coin_risk_snapshot")) server.registerTool(
   "live_coin_risk_snapshot",
@@ -511,7 +510,7 @@ if (shouldRegister("live_coin_risk_snapshot")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 17: Coin Risk History
+// TOOL 18: Coin Risk History
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_coin_risk_history")) server.registerTool(
   "live_coin_risk_history",
@@ -528,7 +527,7 @@ if (shouldRegister("live_coin_risk_history")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 18: Mark Dislocations
+// TOOL 19: Mark Dislocations
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_mark_dislocations")) server.registerTool(
   "live_mark_dislocations",
@@ -557,7 +556,7 @@ if (shouldRegister("live_mark_dislocations")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 19: Recent Liquidations
+// TOOL 20: Recent Liquidations
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_recent_liquidations")) server.registerTool(
   "live_recent_liquidations",
@@ -578,7 +577,7 @@ if (shouldRegister("live_recent_liquidations")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 20: Liquidation Summary
+// TOOL 21: Liquidation Summary
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_liquidation_summary")) server.registerTool(
   "live_liquidation_summary",
@@ -598,7 +597,7 @@ if (shouldRegister("live_liquidation_summary")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 20: Long/Short Ratio                         [FREE]
+// TOOL 22: Long/Short Ratio                         [FREE]
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_long_short_ratio")) server.registerTool(
   "live_long_short_ratio",
@@ -625,7 +624,7 @@ if (shouldRegister("live_long_short_ratio")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 16: Cohort Bias
+// TOOL 23: Cohort Bias
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_cohort_bias")) server.registerTool(
   "live_cohort_bias",
@@ -640,7 +639,7 @@ if (shouldRegister("live_cohort_bias")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 17: Trader Daily Stats
+// TOOL 24: Trader Daily Stats
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_trader_daily_stats")) server.registerTool(
   "pulse_trader_daily_stats",
@@ -655,7 +654,7 @@ if (shouldRegister("pulse_trader_daily_stats")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 18: Biggest Wins & Losses (Global)
+// TOOL 25: Biggest Wins & Losses (Global)
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_biggest_trades")) server.registerTool(
   "pulse_biggest_trades",
@@ -682,7 +681,7 @@ if (shouldRegister("pulse_biggest_trades")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 19: Order Book                               [FREE]
+// TOOL 26: Order Book                               [FREE]
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("market_orderbook")) server.registerTool(
   "market_orderbook",
@@ -699,7 +698,7 @@ if (shouldRegister("market_orderbook")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 20: Token Leaderboard
+// TOOL 27: Token Leaderboard
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_token_leaderboard")) server.registerTool(
   "pulse_token_leaderboard",
@@ -716,7 +715,7 @@ if (shouldRegister("pulse_token_leaderboard")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 21: Trader Token Stats
+// TOOL 28: Trader Token Stats
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_trader_token_stats")) server.registerTool(
   "pulse_trader_token_stats",
@@ -731,7 +730,7 @@ if (shouldRegister("pulse_trader_token_stats")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 22: Most Traded Coins                        [FREE]
+// TOOL 29: Most Traded Coins                        [FREE]
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_most_traded_coins")) server.registerTool(
   "pulse_most_traded_coins",
@@ -747,7 +746,7 @@ if (shouldRegister("pulse_most_traded_coins")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 23: Cohort History
+// TOOL 30: Cohort History
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_cohort_history")) server.registerTool(
   "pulse_cohort_history",
@@ -757,7 +756,7 @@ if (shouldRegister("pulse_cohort_history")) server.registerTool(
       useToonFormat: useToonFormatSchema,
       tierType: z.enum(["pnl", "size"]).describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers"),
       tier: tierSchema,
-      days: z.number().min(1).max(365).default(30).describe("Number of days of history to return"),
+      days: z.number().min(1).max(365).default(31).describe("Number of days of history to return"),
     },
   },
   async ({ useToonFormat, tierType, tier, days }) =>
@@ -767,7 +766,7 @@ if (shouldRegister("pulse_cohort_history")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 24: Trader Closed Positions
+// TOOL 31: Trader Closed Positions
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_trader_closed_positions")) server.registerTool(
   "pulse_trader_closed_positions",
@@ -789,7 +788,7 @@ if (shouldRegister("pulse_trader_closed_positions")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 25: Trader Closed Position Stats
+// TOOL 32: Trader Closed Position Stats
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_trader_closed_position_stats")) server.registerTool(
   "pulse_trader_closed_position_stats",
@@ -804,7 +803,7 @@ if (shouldRegister("pulse_trader_closed_position_stats")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 26: Recent Closed Positions (Global)
+// TOOL 33: Recent Closed Positions (Global)
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_recent_closed_positions")) server.registerTool(
   "pulse_recent_closed_positions",
@@ -831,7 +830,7 @@ if (shouldRegister("pulse_recent_closed_positions")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 27: Historical Open Interest
+// TOOL 33: Historical Open Interest
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("market_historical_oi")) server.tool(
   "market_historical_oi",
@@ -854,7 +853,7 @@ if (shouldRegister("market_historical_oi")) server.tool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 28: Recent 1m Candles
+// TOOL 34: Recent 1m Candles
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("market_recent_candles")) server.registerTool(
   "market_recent_candles",
@@ -871,17 +870,19 @@ if (shouldRegister("market_recent_candles")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 29: Cohort Bias History
+// TOOL 35: Cohort Bias History
 // ══════════════════════════════════════════════════════════
-if (shouldRegister("pulse_cohort_bias_history")) server.tool(
+if (shouldRegister("pulse_cohort_bias_history")) server.registerTool(
   "pulse_cohort_bias_history",
-  "Get historical hourly bias snapshots for all trader cohorts. Returns net long/short notional and account counts per tier. Use this to see how different groups (whales, smart money) have shifted their positioning over time. Supports per-coin or global aggregate. Max range is 30 days.",
   {
-    useToonFormat: useToonFormatSchema,
-    coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER). Omit for global exchange aggregate."),
-    since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '24h', '7d', '30d'"),
-    startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
-    endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+    description: "Get historical hourly bias snapshots for all trader cohorts. Returns net long/short notional and account counts per tier. Use this to see how different groups (whales, smart money) have shifted their positioning over time. Supports per-coin or global aggregate. Max range is 30 days.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER). Omit for global exchange aggregate."),
+      since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '24h', '7d', '30d'"),
+      startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
+      endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+    }
   },
   async ({ useToonFormat, coin, since, startTime, endTime }) => {
     const params: Record<string, string> = {};
@@ -894,16 +895,18 @@ if (shouldRegister("pulse_cohort_bias_history")) server.tool(
 );
 
 // ══════════════════════════════════════════════════════════
-// TOOL 30: Cohort Daily Performance Stats
+// TOOL 36: Cohort Daily Performance Stats
 // ══════════════════════════════════════════════════════════
-if (shouldRegister("pulse_cohort_performance_daily")) server.tool(
+if (shouldRegister("pulse_cohort_performance_daily")) server.registerTool(
   "pulse_cohort_performance_daily",
-  "Get historical daily performance statistics for all trader cohorts. Returns PnL, volume, trade counts, and active trader counts per tier. Use this to track the consistency and profitability of different groups over time. Max range is 30 days.",
   {
-    useToonFormat: useToonFormatSchema,
-    since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '7d', '14d', '30d'"),
-    startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
-    endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+    description: "Get historical daily performance statistics for all trader cohorts. Returns PnL, volume, trade counts, and active trader counts per tier. Use this to track the consistency and profitability of different groups over time. Max range is 30 days.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '7d', '14d', '30d'"),
+      startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
+      endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+    }
   },
   async ({ useToonFormat, since, startTime, endTime }) => {
     const params: Record<string, string> = {};
@@ -958,14 +961,20 @@ if (shouldRegister("live_cohort_bias_history")) server.registerTool(
 );
 
 // ─── Start Server ────────────────────────────────────────
-async function main() {
+export async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  const toolCount = API_KEY ? 37 : FREE_TIER_TOOLS.size;
-  console.error(`Coinversaa Pulse MCP server running on stdio (${toolCount} tools, ${API_KEY ? 'full access' : 'free tier'})`);
+  const toolCount = API_KEY ? 38 : FREE_TIER_TOOLS.size;
+  console.error(`Coinversa Pulse MCP server running on stdio (${toolCount} tools, ${API_KEY ? 'full access' : 'free tier'})`);
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
-});
+// Only start the server if not in test mode
+if (process.env.NODE_ENV !== 'test') {
+  main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  });
+}
+
+// Export server for testing
+export { server, callAPI, normalizeCoin, FREE_TIER_TOOLS };

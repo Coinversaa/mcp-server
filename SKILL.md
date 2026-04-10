@@ -1,9 +1,9 @@
 ---
 name: coinversaa-pulse
-description: "Crypto intelligence for AI agents. 7 free tools + 32 premium tools for Hyperliquid trader analytics, behavioral cohorts, syncer-backed risk data, live market data, builder dex markets (commodities, stocks, indices), liquidation heatmaps, and whale tracking across 710K+ wallets, 1.8B+ trades, and 369+ markets."
+description: "Crypto intelligence for AI agents. 7 free tools + 31 premium tools for Hyperliquid trader analytics, behavioral cohorts, syncer-backed risk data, live market data, builder dex markets (commodities, stocks, indices), liquidation heatmaps, and whale tracking across 710K+ wallets, 1.8B+ trades, and 369+ markets."
 version: 0.5.0
-author: Coinversaa <chat@coinversaa.ai>
-homepage: https://coinversaa.ai
+author: Coinversa <chat@coinversaa.ai>
+homepage: https://coinversa.ai
 repository: https://github.com/coinversaa/mcp-server
 license: MIT
 tags:
@@ -20,19 +20,19 @@ tags:
   - stocks
   - mcp
 env:
-  COINVERSAA_API_KEY:
-    description: "Your Coinversaa API key (starts with cvsa_). Get one at https://coinversaa.ai/developers. Optional — 7 tools available without a key."
+  COINVERSA_API_KEY:
+    description: "Your Coinversa API key (starts with cvsa_). Get one at https://coinversa.ai/developers. Optional — 7 tools available without a key."
     required: false
-  COINVERSAA_API_URL:
-    description: "API base URL (defaults to https://staging.api.coinversaa.ai)"
+  COINVERSA_API_URL:
+    description: "API base URL (defaults to https://api.coinversa.ai)"
     required: false
 ---
 
-# Coinversaa Pulse
+# Coinversa Pulse
 
 Crypto intelligence for AI agents. Query 710K+ Hyperliquid wallets, 1.8B+ trades, behavioral cohorts, and live market data through any MCP-compatible client.
 
-This is not a wrapper around a public blockchain API. Coinversaa indexes Hyperliquid's clearinghouse directly and computes analytics that don't exist anywhere else.
+This is not a wrapper around a public blockchain API. Coinversa indexes Hyperliquid's clearinghouse directly and computes analytics that don't exist anywhere else.
 
 **Now with builder dex support** — 369+ markets across 8 dexes including commodities, stocks, indices, and perps.
 
@@ -57,7 +57,7 @@ Daily cap: 500 requests/day per IP.
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
+    "coinversa": {
       "command": "npx",
       "args": ["-y", "@coinversaa/mcp-server"]
     }
@@ -65,20 +65,20 @@ Daily cap: 500 requests/day per IP.
 }
 ```
 
-### Option B: Full Access (API Key — 39 tools)
+### Option B: Full Access (API Key — 38 tools)
 
-Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) — unlocks all 39 tools with higher rate limits (100 req/min, no daily cap).
+Get a key at [coinversa.ai/developers](https://coinversa.ai/developers) — unlocks all 38 tools with higher rate limits (100 req/min, no daily cap).
 
 **Claude Desktop** — edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
+    "coinversa": {
       "command": "npx",
       "args": ["-y", "@coinversaa/mcp-server"],
       "env": {
-        "COINVERSAA_API_KEY": "cvsa_your_key_here"
+        "COINVERSA_API_KEY": "cvsa_your_key_here"
       }
     }
   }
@@ -90,11 +90,11 @@ Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) — un
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
+    "coinversa": {
       "command": "npx",
       "args": ["-y", "@coinversaa/mcp-server"],
       "env": {
-        "COINVERSAA_API_KEY": "cvsa_your_key_here"
+        "COINVERSA_API_KEY": "cvsa_your_key_here"
       }
     }
   }
@@ -104,8 +104,8 @@ Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) — un
 **Claude Code**:
 
 ```bash
-claude mcp add coinversaa -- npx -y @coinversaa/mcp-server
-export COINVERSAA_API_KEY="cvsa_your_key_here"
+claude mcp add coinversa -- npx -y @coinversaa/mcp-server
+export COINVERSA_API_KEY="cvsa_your_key_here"
 ```
 
 **OpenClaw**:
@@ -135,9 +135,9 @@ Hyperliquid supports multiple builder dexes beyond the native perps exchange. Ea
 
 Use the `list_markets` tool to discover all available symbols and which dex they belong to.
 
-Backend trading note for agentic traders: Coinversaa's backend-signed Hyperliquid orders rely on an approved Hyperliquid agent wallet, not a `vaultAddress`. If the backend signer changes, it must be re-approved on Hyperliquid before orders will succeed. Builder dex orders may also require unified account mode so USDC collateral is shared across supported dexes. For isolated-only markets, omitted `marginMode` now defaults to `isolated`; do not assume `cross` is available on builder dex symbols.
+Backend trading note for agentic traders: Coinversa's backend-signed Hyperliquid orders rely on an approved Hyperliquid agent wallet, not a `vaultAddress`. If the backend signer changes, it must be re-approved on Hyperliquid before orders will succeed. Builder dex orders may also require unified account mode so USDC collateral is shared across supported dexes. For isolated-only markets, omitted `marginMode` now defaults to `isolated`; do not assume `cross` is available on builder dex symbols.
 
-## Tools (39 total — 7 free, 32 require API key)
+## Tools (38 total — 7 free, 31 require API key)
 
 ## Risk Tools Freshness
 
@@ -209,7 +209,7 @@ Use these tools for deep dives on specific wallets. Any tool taking `address` ex
 
 ### Pulse — Cohort Intelligence
 
-Coinversaa classifies 710K+ wallets into behavioral tiers. This is unique data nobody else has.
+Coinversa classifies 710K+ wallets into behavioral tiers. This is unique data nobody else has.
 
 **PnL tiers** (by profitability): `money_printer`, `smart_money`, `grinder`, `humble_earner`, `exit_liquidity`, `semi_rekt`, `full_rekt`, `giga_rekt`
 
@@ -319,12 +319,12 @@ Rate limit headers are included in every response:
 
 ## Links
 
-- Website: [coinversaa.ai](https://coinversaa.ai)
-- API Docs: [coinversaa.ai/developers](https://coinversaa.ai/developers)
+- Website: [coinveraa.ai](https://coinversa.ai)
+- API Docs: [coinversa.ai/developers](https://coinversa.ai/developers)
 - GitHub: [github.com/coinversaa/mcp-server](https://github.com/coinversaa/mcp-server)
 - npm: [@coinversaa/mcp-server](https://www.npmjs.com/package/@coinversaa/mcp-server)
 - Support: [chat@coinversaa.ai](mailto:chat@coinversaa.ai)
 
 ---
 
-Built by [Coinversaa](https://coinversaa.ai) — Crypto intelligence for AI agents.
+Built by [Coinversa](https://coinversa.ai) — Crypto intelligence for AI agents.
