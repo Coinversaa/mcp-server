@@ -1,16 +1,33 @@
-# Coinversaa Pulse — MCP Server
+# Coinversa Pulse — MCP Server
 
 <a href="https://glama.ai/mcp/servers/Coinversaa/mcp-server"><img src="https://glama.ai/mcp/servers/Coinversaa/mcp-server/badge" alt="MCP Server" /></a>
 
-Crypto intelligence for AI agents. Query 710K+ Hyperliquid wallets, 1.8B+ trades, behavioral cohorts, and live market data through any MCP-compatible client.
+Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, indexed trade history with PnL attribution, behavioral cohorts, and live market data through any MCP-compatible client. Call `pulse_global_stats` to see exact current coverage (tracked wallets, indexed trades, volume, PnL, data window).
 
 **Now with builder dex support** — trade commodities (gold, silver, oil), stocks (TSLA, AAPL), and perps across 8 dexes and 369+ markets.
+
+## What's new in 0.6.0
+
+**Canonical cross-market asset taxonomy.** The same underlying asset can appear under different tickers on different venues (e.g. `GOLD` on xyz, `PAXG` on native Hyperliquid — both track gold). v0.6.0 adds 3 new tools that resolve synonyms server-side and aggregate across venues, plus a ground-truth OI tool:
+
+| New tool | What it answers |
+|----------|-----------------|
+| `list_assets` | "What assets are available? Which are listed on 2+ venues?" |
+| `list_asset` | "Where does GOLD trade? Is PAXG the same as GOLD?" |
+| `pulse_cross_market_asset` | "Is gold more crowded on xyz or hyna? Do dexes disagree on BTC direction?" |
+| `live_official_oi` | "What does Hyperliquid itself report for BTC OI — do our numbers match?" |
+
+Synonyms baked in: `PAXG → GOLD`, `XAUT → GOLD`, `XAGT → SILVER`. Prefix grouping (`BTC` ≡ `flx:BTC` ≡ `hyna:BTC`) works automatically.
+
+Tool count: **39 → 43**. Free tier remains **7 keyless tools**. The new tools require an API key — a free-tier key from [coinversa.ai/developers](https://coinversa.ai/developers) takes 10 seconds to create and unlocks them.
+
+Other 0.6.0 housekeeping: default API URL points at production; removed stale hard-coded "710K+ wallets / 1.8B+ trades" marketing figures (call `pulse_global_stats` for current coverage); `pulse_market_overview` kept as a deprecated alias for the canonical `list_markets`.
 
 ## Quick Start
 
 ### Option A: Free Tier (No API Key)
 
-Try it instantly — no sign-up needed. 7 tools with rate limits:
+Try it instantly — no sign-up needed. 7 keyless tools with rate limits:
 
 ```json
 {
@@ -23,11 +40,11 @@ Try it instantly — no sign-up needed. 7 tools with rate limits:
 }
 ```
 
-For all 39 tools and higher rate limits, get an API key (Option B).
+For all 43 tools and higher rate limits, get an API key (Option B).
 
 ### Option B: Full Access (API Key)
 
-Get a key at [coinversaa.ai/developers](https://coinversaa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
+Get a key at [coinversa.ai/developers](https://coinversa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
 
 #### Claude Desktop
 
@@ -100,9 +117,36 @@ Hyperliquid supports multiple builder dexes beyond the native perps exchange. Ea
 Use the `list_markets` tool to discover all available symbols and which dex they belong to.
 
 Backend trading note for agentic traders: Coinversaa's backend-signed Hyperliquid orders use an approved Hyperliquid agent wallet, not a `vaultAddress`. If the backend signer changes, re-approve that signer on Hyperliquid before submitting orders. Builder dex orders may also require unified account mode so USDC collateral is shared across supported dexes. For isolated-only markets, omitted `marginMode` now defaults to `isolated`; do not assume `cross` is available on builder dex symbols.
-Frontend account-mode note: the app can now prepare a user-signed abstraction change via `POST /api/v1/hyperliquid/prepare-abstraction`, which lets the user enable or disable Unified Account mode without leaving Coinversaa. Hyperliquid may still reject a transition for exchange-side reasons.
+Frontend account-mode note: the app can now prepare a user-signed abstraction change via `POST /api/v1/hyperliquid/prepare-abstraction`, which lets the user enable or disable Unified Account mode without leaving Coinversa. Hyperliquid may still reject a transition for exchange-side reasons.
 
-## Available Tools (39)
+## Cross-Market Asset Taxonomy
+
+The same underlying asset can appear under different tickers on different venues (e.g. `GOLD` on xyz and `PAXG` on hyna both track gold). Coinversa exposes a **canonical asset registry** so you don't have to reinvent the grouping.
+
+- **Canonical** — the economic-exposure identifier (`GOLD`, `BTC`, `ETH`).
+- **Symbol** — what a venue lists it as (`xyz:GOLD`, `hyna:PAXG`, `BTC`, `flx:BTC`).
+- **Synonyms** (ticker → canonical): `PAXG → GOLD`, `XAUT → GOLD`, `XAGT → SILVER`.
+
+Use `list_assets` / `list_asset` / `pulse_cross_market_asset` for anything asset-level (venue availability, cross-venue OI, cross-venue bias disagreement). Use `list_markets` / `market_price` for single-venue queries.
+
+**How grouping works:**
+- Same ticker across venues (`BTC`, `flx:BTC`, `hyna:BTC`) → automatically grouped under canonical `BTC`. Zero-config.
+- Different ticker, same exposure (`PAXG` and `GOLD` both track 1 oz gold) → resolved via the synonym table above.
+- Wrapped or staked variants (`WBTC`, `WETH`, `stETH`, `wstETH`) → **not** aggregated by default. They have different risk profiles and liquidity; treat them as independent assets.
+
+**Example: what "GOLD" looks like aggregated** (live snapshot, April 2026):
+- 6 venues: `xyz:GOLD` ($149M OI dominant), `PAXG` (native HL, $39M), `cash:GOLD`, `km:GOLD`, `flx:GOLD`, `hyna:GOLD`
+- `netBias: 0.27` — moderately long across venues
+- `biasRange: 0.61` — venues disagree strongly on strength of conviction (worth flagging in any answer)
+- `synonyms: ["GOLD", "PAXG"]` — confirms PAXG was correctly merged into canonical GOLD
+
+Numbers are illustrative — call `pulse_cross_market_asset` with `canonical: "GOLD"` for current values.
+
+### Backend dependency
+
+The 3 asset tools call `/api/public/v1/assets*` endpoints on the production Coinversa backend (`https://api.coinversa.ai`). Self-hosted or forked setups need to run a backend that exposes these routes; see the Coinversa backend repo for the reference implementation.
+
+## Available Tools (43)
 
 ### Free Tier (No API Key Required)
 
@@ -110,9 +154,9 @@ These 7 tools work without an API key, with IP-based rate limits:
 
 | Tool | Rate Limit | Description |
 |------|-----------|-------------|
-| `pulse_global_stats` | 10/min | Total traders, trades, volume across Hyperliquid |
-| `pulse_market_overview` | 5/min | Live prices, funding rates, OI for every pair (filterable by dex) |
-| `list_markets` | 5/min | Discover all available markets with dex, price, volume, OI |
+| `pulse_global_stats` | 10/min | Total traders, trades, volume across Hyperliquid (call this for current coverage numbers) |
+| `list_markets` | 5/min | Every trading symbol with dex, price, volume, OI |
+| `pulse_market_overview` | 5/min | Deprecated alias for `list_markets` — kept for backward compatibility |
 | `market_price` | 30/min | Current mark price for any symbol |
 | `market_orderbook` | 10/min | Bid/ask depth for any trading pair |
 | `pulse_most_traded_coins` | 5/min | Most actively traded coins by volume |
@@ -120,13 +164,15 @@ These 7 tools work without an API key, with IP-based rate limits:
 
 Daily cap: 500 requests/day per IP.
 
-### Full Access (API Key Required — 32 additional tools)
+**Cross-market asset tools and `live_official_oi` require an API key** — even a free-tier one. Grab one from [coinversa.ai/developers](https://coinversa.ai/developers) in 10 seconds.
 
-All 39 tools with 100 req/min per key. Includes trader profiles, cohort intelligence, syncer-backed risk routes, closed positions, historical analytics, and more.
+### Full Access (API Key Required — 36 additional tools)
+
+All 43 tools with 100 req/min per key. Includes cross-market asset taxonomy, trader profiles, cohort intelligence, syncer-backed risk routes, closed positions, historical analytics, official per-dex OI, and more.
 
 ### Risk Tools Freshness
 
-Syncer-backed risk tools such as `live_risk_overview`, `live_coin_risk_snapshot`, `live_coin_risk_history`, `live_mark_dislocations`, `live_recent_liquidations`, `live_liquidation_summary`, `live_oi_history`, and `live_cohort_bias_history` are best treated as **beta recent-intelligence tools**.
+Syncer-backed risk tools such as `live_risk_overview`, `live_coin_risk_snapshot`, `live_coin_risk_history`, `live_mark_dislocations`, `live_recent_liquidations`, `live_liquidation_summary`, `live_oi_history`, and `live_cohort_bias_history` are best treated as **beta recent-intelligence tools**. For venue ground-truth OI, `live_official_oi` pulls directly from Hyperliquid's Info API as a cross-check.
 
 - Best for research, LLM training, liquidation analysis, OI trend work, and crowding detection
 - Best queried over recent windows like `7d` or `30d`
@@ -154,15 +200,25 @@ In practice, a Claude-style agent can use them to move from:
 
 | Tool | Description |
 |------|-------------|
-| `pulse_global_stats` | Total traders, trades, volume, PnL across Hyperliquid |
-| `pulse_market_overview` | Live prices, funding rates, OI for every pair. Optional `dex` param to filter by builder dex |
-| `list_markets` | Discover all available markets across all dexes — returns dex, price, volume, funding rate, OI |
+| `pulse_global_stats` | Total traders, trades, volume, PnL across Hyperliquid — call this for current coverage numbers |
+| `list_markets` | Canonical market discovery — every symbol with dex, price, volume, funding rate, OI |
+| `pulse_market_overview` | Deprecated alias for `list_markets` (same payload) |
 | `pulse_leaderboard` | Top traders ranked by PnL, win rate, volume, score, or risk-adjusted returns |
 | `pulse_hidden_gems` | Underrated high-performers most platforms miss |
 | `pulse_most_traded_coins` | Most actively traded coins ranked by volume and trade count |
 | `pulse_biggest_trades` | Biggest winning or losing trades across all of Hyperliquid |
 | `pulse_recent_trades` | Biggest trades in the last N minutes/hours |
 | `pulse_token_leaderboard` | Top traders for a specific coin |
+
+### Assets — Canonical Cross-Market (v0.6.0)
+
+One asset, many venues, many tickers. Server-side resolution of synonyms (PAXG↔GOLD, XAUT↔GOLD, XAGT↔SILVER) and venue prefixes (`BTC` ≡ `flx:BTC` ≡ `hyna:BTC`). All three require an API key.
+
+| Tool | Description |
+|------|-------------|
+| `list_assets` | Directory of canonical assets — every asset grouped by economic exposure, with venues, synonyms, and a cross-market flag. Use `crossMarketOnly: true` to filter to multi-venue assets. |
+| `list_asset` | Single canonical lookup with venue breakdown. Accepts synonyms — `list_asset({canonical: "PAXG"})` returns the GOLD asset. |
+| `pulse_cross_market_asset` | Aggregated per-venue long/short/bias/OI for one asset, plus cross-venue totals and a `biasRange` metric (venues agree vs disagree on direction). The agent-native answer to "is X crowded?" and "do venues disagree on Y?". |
 
 ### Pulse — Trader Profiles
 
@@ -178,7 +234,7 @@ In practice, a Claude-style agent can use them to move from:
 
 ### Pulse — Cohort Intelligence
 
-710K+ wallets classified into behavioral tiers — unique data nobody else has.
+Every tracked Hyperliquid wallet classified into behavioral tiers — unique data nobody else has. For the current tracked-wallet count, call `pulse_global_stats`.
 
 **PnL tiers** (by profitability): `money_printer`, `smart_money`, `grinder`, `humble_earner`, `exit_liquidity`, `semi_rekt`, `full_rekt`, `giga_rekt`
 
@@ -186,7 +242,7 @@ In practice, a Claude-style agent can use them to move from:
 
 | Tool | Description |
 |------|-------------|
-| `pulse_cohort_summary` | Behavioral tier breakdown across 710K+ wallets |
+| `pulse_cohort_summary` | Behavioral tier breakdown across every tracked wallet |
 | `pulse_cohort_positions` | What money_printers / whales are holding RIGHT NOW |
 | `pulse_cohort_trades` | Every trade a cohort made in the last N minutes/hours |
 | `pulse_cohort_history` | Historical performance trends for any cohort |
@@ -216,7 +272,8 @@ In practice, a Claude-style agent can use them to move from:
 | `live_liquidation_summary` | Best liquidation summary tool: counts, totals, by-coin rollups, and timeline buckets |
 | `live_long_short_ratio` | Global or per-coin long/short ratio with optional history |
 | `live_cohort_bias` | Net long/short stance for every tier on a given coin |
-| `live_oi_history` | Historical open interest for any coin or global — hourly snapshots up to 30 days |
+| `live_oi_history` | Historical open interest for any coin or global — hourly snapshots up to 30 days (our derived OI) |
+| `live_official_oi` | **Official per-dex OI** pulled from Hyperliquid's Info API (venue ground truth, not derived) — hourly snapshots up to 30 days |
 | `live_cohort_bias_history` | How each cohort's long/short bias evolved over time — useful for tracking smart-money rotation |
 | `pulse_recent_closed_positions` | Positions just closed across all traders with entry/exit data |
 
@@ -246,13 +303,19 @@ Once connected, try asking your AI:
 - "List all builder dex markets with their prices"
 - "What stocks can I trade on Hyperliquid?"
 - "Show me the last 240 one-minute candles for BTC"
+- "Is PAXG the same as GOLD? Which venues list it?"
+- "Show me every asset that trades on 2+ dexes"
+- "Total open interest on BTC across all dexes right now"
+- "Is ETH more crowded on HYNA or native Hyperliquid?"
+- "Do the dexes disagree on gold direction?"
+- "What does Hyperliquid's own Info API say BTC OI is — does it match our number?"
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `COINVERSAA_API_KEY` | No | — | Your API key (starts with `cvsa_`). Without it, only 7 free tools are available. |
-| `COINVERSAA_API_URL` | No | `https://staging.api.coinversaa.ai` | API base URL (will move to `api.coinversaa.ai` for production) |
+| `COINVERSAA_API_KEY` | No | — | Your API key (starts with `cvsa_`). Without it, only the 7 keyless free tools are available. |
+| `COINVERSAA_API_URL` | No | `https://api.coinversa.ai` | Override the API host. Only needed if you operate your own Coinversa backend (self-hosted or fork). |
 
 ## Rate Limits
 
@@ -281,10 +344,12 @@ npx @modelcontextprotocol/inspector build/index.js
 
 ## What Makes This Different
 
-This isn't a wrapper around a public blockchain API. Coinversaa indexes Hyperliquid's clearinghouse directly and computes analytics that don't exist anywhere else:
+This isn't a wrapper around a public blockchain API. Coinversa indexes Hyperliquid's clearinghouse directly and computes analytics that don't exist anywhere else:
 
+- **Canonical cross-market taxonomy**: one asset, many venues, many tickers. `list_assets` / `list_asset` / `pulse_cross_market_asset` resolve synonyms (PAXG↔GOLD, XAUT↔GOLD, XAGT↔SILVER) and aggregate OI, bias, and positions across venues — server-side, no client grouping required
 - **Builder dex markets**: Access 369+ markets across 8 dexes — commodities, stocks, indices, and perps
-- **Behavioral cohorts**: 710K wallets classified into PnL tiers (money_printer to giga_rekt) and size tiers (leviathan to shrimp)
+- **Venue ground-truth OI**: `live_official_oi` pulls directly from Hyperliquid's Info API, cross-checkable against our derived numbers
+- **Behavioral cohorts**: every tracked wallet classified into PnL tiers (money_printer to giga_rekt) and size tiers (leviathan to shrimp)
 - **Live cohort positions**: See what the best traders are holding in real-time
 - **Real-time trade feed**: Every trade by any wallet or cohort, queryable by time window
 - **Liquidation heatmaps**: Cluster analysis across price levels for any coin
@@ -292,7 +357,7 @@ This isn't a wrapper around a public blockchain API. Coinversaa indexes Hyperliq
 - **Hidden gem discovery**: Find skilled traders that ranking sites miss
 - **Open interest history**: Hourly OI snapshots for any coin, up to 30 days back
 - **Cohort bias history**: Track how smart money, whales, and other tiers shifted long/short over time
-- **1.8B+ trades indexed**: The deepest Hyperliquid dataset available as an API
+- **Deepest Hyperliquid trade history available as an API**: call `pulse_global_stats` for live coverage numbers (not a stale marketing figure).
 
 ## Contributing
 
@@ -304,4 +369,4 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 
 ---
 
-Built by [Coinversaa](https://coinversaa.ai)
+Built by [Coinversa](https://coinversa.ai)
