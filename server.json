@@ -17,7 +17,7 @@
       },
       "environmentVariables": [
         {
-          "description": "Coinversaa API key (starts with cvsa_). Optional — without it, 6 free tools are available. Get one at https://coinversaa.ai/developers for all 29 tools.",
+          "description": "Coinversa API key (starts with cvsa_). Optional — without it, 6 free tools are available. Get one at https://coinversa.ai/developers for all 29 tools.",
           "isRequired": false,
           "format": "string",
           "isSecret": true,

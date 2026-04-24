@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Coinversaa Pulse MCP Server
+// Coinversa Pulse MCP Server
 // Exposes crypto intelligence tools to AI agents via Model Context Protocol
 //
 // Usage with Claude Desktop / Cursor / Claude Code:
@@ -14,14 +14,19 @@ import { z } from "zod";
 
 // ─── Configuration ───────────────────────────────────────
 const API_KEY = process.env.COINVERSAA_API_KEY;
-// TODO: Change default to https://api.coinversaa.ai once production API is deployed
-const API_URL = process.env.COINVERSAA_API_URL || "https://staging.api.coinversaa.ai";
+// Defaults to production. Override COINVERSAA_API_URL only if you operate
+// your own Coinversa backend (self-hosted / fork) and want the MCP to call it.
+const API_URL = process.env.COINVERSAA_API_URL || "https://api.coinversa.ai";
 const BASE = `${API_URL}/api/public/v1`;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1_000;
 
-// Free tier tools — available without an API key
+// Free tier tools — available without an API key (IP-rate-limited on the backend).
+// Must match prod's FREE_TIER_ROUTES allowlist in apiKeyAuth.ts — any mismatch
+// means users hit 401s on tools the MCP advertises as keyless.
+// The cross-market asset tools (list_assets, list_asset, pulse_cross_market_asset)
+// require an API key on prod and are intentionally NOT in this set.
 const FREE_TIER_TOOLS = new Set([
   'pulse_global_stats',
   'pulse_market_overview',
@@ -32,8 +37,12 @@ const FREE_TIER_TOOLS = new Set([
   'live_long_short_ratio',
 ]);
 
+const TOTAL_TOOL_COUNT = 43;
+
 if (!API_KEY) {
-  console.error("WARNING: COINVERSAA_API_KEY not set. Only free-tier tools will be available (7 of 39). Get a key at https://coinversaa.ai/developers");
+  console.error(
+    `WARNING: COINVERSAA_API_KEY not set. Only free-tier tools will be available (${FREE_TIER_TOOLS.size} of ${TOTAL_TOOL_COUNT}). Get a key at https://coinversa.ai/developers`
+  );
 }
 
 function shouldRegister(toolName: string): boolean {
@@ -138,7 +147,7 @@ async function callAPI(useToon: boolean, path: string, params?: Record<string, s
       if (err.name === "AbortError") {
         lastError = new Error("Request timed out after 30 seconds. The server may be under heavy load — try again.");
       } else if (err.cause?.code === "ECONNREFUSED" || err.cause?.code === "ENOTFOUND") {
-        lastError = new Error("Cannot connect to the Coinversaa API. Check your COINVERSAA_API_URL setting and network connection.");
+        lastError = new Error("Cannot connect to the Coinversa API. Check your COINVERSAA_API_URL setting and network connection.");
       } else {
         lastError = err;
       }
@@ -165,13 +174,14 @@ function toolResult(data: any) {
 }
 
 // ─── Create Server ───────────────────────────────────────
-const SERVER_INSTRUCTIONS = `Coinversaa Pulse — Crypto intelligence for AI agents.
+const SERVER_INSTRUCTIONS = `Coinversa Pulse — Crypto intelligence for AI agents.
 
 DATA COVERAGE:
-- 710K+ tracked Hyperliquid wallets classified into behavioral cohorts
-- 1.8B+ indexed trades with full PnL attribution
+- Every tracked Hyperliquid wallet classified into behavioral cohorts (size + PnL tiers)
+- All indexed trades with full PnL attribution (for current totals call pulse_global_stats)
 - Real-time positions, liquidation heatmaps, and market data
 - Syncer-backed risk routes for crowding, real liquidation events, and weekly market stress
+- Cross-market asset taxonomy resolving venue symbols (xyz:GOLD, hyna:PAXG) to canonical assets
 
 MARKETS:
 Hyperliquid has native perpetuals (BTC, ETH, SOL, etc.) plus 7 builder dexes — independent perp exchanges built on top of Hyperliquid, each with their own collateral token and market listings.
@@ -191,6 +201,19 @@ SYMBOL FORMAT:
 - Native symbols: just the ticker (BTC, ETH, SOL)
 - Builder dex symbols: prefix:TICKER (xyz:SILVER, cash:TSLA, km:OIL)
 - Use the list_markets tool to discover all available symbols and which dex they belong to
+
+CROSS-MARKET ASSETS (canonical vs. venue symbol):
+The same underlying exposure can appear under different tickers on different
+venues. For cross-market questions ("what venues trade gold?", "total OI on
+BTC across all dexes?"), use the canonical asset — not the venue symbol:
+- Canonical GOLD = { GOLD (native), xyz:GOLD, hyna:PAXG, ... } — PAXG is a synonym for GOLD
+- Canonical BTC  = { BTC (native), flx:BTC, hyna:BTC, ... }
+
+Tools:
+- list_assets               → directory of canonical assets and their venues
+- list_asset                → one asset's venue breakdown (accepts synonyms)
+- pulse_cross_market_asset  → aggregated OI / positions / bias across venues
+Known synonyms: PAXG → GOLD, XAUT → GOLD, XAGT → SILVER.
 
 COHORT TIERS:
 Wallets are classified into two tier systems:
@@ -227,7 +250,7 @@ if (shouldRegister("pulse_global_stats")) server.registerTool(
 if (shouldRegister("pulse_market_overview")) server.registerTool(
   "pulse_market_overview",
   {
-    description: "Get full market state: 24h volume, open interest, and live data for every trading pair on Hyperliquid (native + all builder dexes) including mark price, funding rate, and 24h change. Use the optional dex filter to narrow to a specific exchange.",
+    description: "DEPRECATED alias for list_markets — returns the same payload (24h volume, open interest, mark price, funding rate, 24h change for every pair). Prefer list_markets for new integrations; this tool is kept for backward compatibility only.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       dex: z.enum(["hl", "xyz", "flx", "vntl", "hyna", "km", "abcd", "cash"]).optional().describe("Filter by dex. 'hl' for native Hyperliquid only, or a builder dex name (xyz, cash, km, etc.). Omit for all markets."),
@@ -246,7 +269,7 @@ if (shouldRegister("pulse_market_overview")) server.registerTool(
 if (shouldRegister("list_markets")) server.registerTool(
   "list_markets",
   {
-    description: "Discover all available trading symbols on Hyperliquid and its builder dexes. Returns every market with its dex, mark price, 24h volume, funding rate, open interest, and 24h change. Use this to find which symbols exist and which dex they belong to. Essential when a user asks about commodities (gold, silver), stocks (TSLA, AAPL), or builder dex markets.",
+    description: "CANONICAL market discovery tool. Returns every trading symbol on Hyperliquid and its builder dexes with dex, mark price, 24h volume, funding rate, open interest, and 24h change. Use this whenever the user asks 'what markets are available?', mentions a commodity (gold, silver, oil), stock (TSLA, AAPL, NVDA), or builder-dex market. Prefer this over pulse_market_overview (same data, kept only for backward compat). For asset-level grouping across venues, use list_assets instead.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       dex: z.enum(["hl", "xyz", "flx", "vntl", "hyna", "km", "abcd", "cash"]).optional().describe("Filter by dex. 'hl' for native Hyperliquid, 'xyz' for commodities/stocks, 'cash' for equities, 'km' for energy, etc. Omit for all markets."),
@@ -256,6 +279,66 @@ if (shouldRegister("list_markets")) server.registerTool(
     const params: Record<string, string> = {};
     if (dex) params.dex = dex;
     return toolResult(await callAPI(useToonFormat, "/pulse/market-overview", params));
+  }
+);
+
+// ══════════════════════════════════════════════════════════
+// TOOL: List Assets (Canonical / Cross-Market Directory)  [FREE]
+// ══════════════════════════════════════════════════════════
+// Use this when the user asks "what venues trade GOLD?" or "which assets are
+// cross-market?" — it returns the canonical asset directory with venue breakdown
+// and synonym resolution (e.g. PAXG is shown as a synonym of GOLD).
+if (shouldRegister("list_assets")) server.registerTool(
+  "list_assets",
+  {
+    description: "Directory of every canonical asset that trades on Hyperliquid or any builder dex, grouped by economic exposure (not by venue ticker). Each asset entry lists its synonyms (e.g. PAXG is a synonym of GOLD), which venues it trades on, aggregated open interest, and a cross-market flag (listed on 2+ venues). Prefer this over list_markets when the user asks 'what assets are available?', 'which venues is GOLD on?', or 'show me cross-market assets'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      crossMarketOnly: z.boolean().optional().describe("If true, return only assets listed on 2+ venues. Default: false (return all)."),
+    },
+  },
+  async ({ useToonFormat, crossMarketOnly }) => {
+    const params: Record<string, string> = {};
+    if (crossMarketOnly) params.crossMarketOnly = 'true';
+    return toolResult(await callAPI(useToonFormat, "/assets", params));
+  }
+);
+
+// ══════════════════════════════════════════════════════════
+// TOOL: List Asset (single canonical lookup)              [FREE]
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("list_asset")) server.registerTool(
+  "list_asset",
+  {
+    description: "Lookup one asset by canonical name or synonym. Returns every venue it trades on, collateral tokens, open interest per venue, and synonyms list. Accepts both canonical names (GOLD, BTC) and synonyms (PAXG, XAUT) — the server resolves them. Use when the user mentions a specific asset and you need its venue availability.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      canonical: z.string().min(1).max(40).describe("Canonical asset name or synonym. Examples: 'GOLD', 'PAXG', 'BTC', 'SILVER', 'HYPE'. The server resolves synonyms to canonical."),
+    },
+  },
+  async ({ useToonFormat, canonical }) => {
+    return toolResult(await callAPI(useToonFormat, `/assets/${encodeURIComponent(canonical)}`));
+  }
+);
+
+// ══════════════════════════════════════════════════════════
+// TOOL: Cross-Market Asset Aggregate                       [FREE]
+// ══════════════════════════════════════════════════════════
+// Server-side aggregation that replaces the old client-side groupby. Use this
+// when the user wants to compare venues ("where is gold most crowded?", "is
+// BTC bias different on hyna vs native?", "how much OI is on gold across all
+// venues?"). Returns per-venue long/short/bias plus the cross-venue total.
+if (shouldRegister("pulse_cross_market_asset")) server.registerTool(
+  "pulse_cross_market_asset",
+  {
+    description: "Cross-market aggregation for one asset: per-venue long/short positions, notional, net bias, unique wallets, leverage, plus a cross-venue total. Also returns biasRange (max-min netBias across venues) to detect disagreement. Accepts canonical names or synonyms (e.g. PAXG resolves to GOLD). Use when the user asks 'is gold crowded?', 'do different dexes disagree on BTC direction?', 'total OI on ETH across all venues?'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      canonical: z.string().min(1).max(40).describe("Canonical asset name or synonym (e.g. 'GOLD', 'PAXG', 'BTC', 'HYPE'). The server resolves synonyms."),
+    },
+  },
+  async ({ useToonFormat, canonical }) => {
+    return toolResult(await callAPI(useToonFormat, `/assets/${encodeURIComponent(canonical)}/cross-market`));
   }
 );
 
@@ -312,7 +395,7 @@ if (shouldRegister("pulse_hidden_gems")) server.registerTool(
 if (shouldRegister("pulse_cohort_summary")) server.registerTool(
   "pulse_cohort_summary",
   {
-    description: "Get behavioral cohort analysis across all 710K+ tracked wallets. Returns PnL tiers (money_printer, smart_money, grinder, humble_earner, exit_liquidity, semi_rekt, full_rekt, giga_rekt) and size tiers (leviathan, tidal_whale, whale, etc). Each tier shows wallet count, avg PnL, avg win rate, and total volume. This is unique intelligence nobody else has.",
+    description: "Get behavioral cohort analysis across every tracked wallet on Hyperliquid. Returns PnL tiers (money_printer, smart_money, grinder, humble_earner, exit_liquidity, semi_rekt, full_rekt, giga_rekt) and size tiers (leviathan, tidal_whale, whale, etc). Each tier shows wallet count, avg PnL, avg win rate, and total volume. This is unique intelligence nobody else has. For the current tracked-wallet total, call pulse_global_stats first.",
     inputSchema: { useToonFormat: useToonFormatSchema },
   },
   async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/pulse/cohorts/summary"))
@@ -936,6 +1019,32 @@ if (shouldRegister("live_oi_history")) server.registerTool(
 );
 
 // ══════════════════════════════════════════════════════════
+// TOOL: Official OI (per-dex exchange ground truth)
+// ══════════════════════════════════════════════════════════
+// Returns the venue's self-reported open interest (pulled from Hyperliquid's
+// Info API) rather than our derived OI from live_positions. Use this when the
+// user wants audit-grade verification ("does our OI match what Hyperliquid
+// publishes?"), per-dex breakdowns, or when cross-checking our computed
+// numbers against venue ground truth.
+if (shouldRegister("live_official_oi")) server.registerTool(
+  "live_official_oi",
+  {
+    description: "Official per-dex open interest for a coin, sourced from Hyperliquid's Info API (not derived from live_positions). Returns hourly snapshots with open interest, mark price, and 24h notional volume. Use when an agent needs venue-reported ground truth, per-dex breakdown, or wants to cross-check computed OI against official numbers. Default 7 days, max 30 days.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      coin: z.string().min(1).max(40).describe("Coin symbol (e.g. BTC, ETH, SOL). Use the bare ticker — dex is supplied via the 'dex' parameter, not prefix."),
+      hours: z.number().min(1).max(720).default(168).describe("Number of hours of history (default 168 = 7 days, max 720 = 30 days)"),
+      dex: z.enum(["hl", "xyz", "flx", "vntl", "hyna", "km", "abcd", "cash"]).optional().default("hl").describe("Which dex's official OI to return. Defaults to 'hl' (native Hyperliquid)."),
+    },
+  },
+  async ({ useToonFormat, coin, hours, dex }) => {
+    const params: Record<string, string> = { hours: String(hours) };
+    if (dex) params.dex = dex;
+    return toolResult(await callAPI(useToonFormat, `/live/official-oi/${coin.toUpperCase()}`, params));
+  }
+);
+
+// ══════════════════════════════════════════════════════════
 // TOOL 38: Cohort Bias History
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_cohort_bias_history")) server.registerTool(
@@ -961,8 +1070,8 @@ if (shouldRegister("live_cohort_bias_history")) server.registerTool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  const toolCount = API_KEY ? 37 : FREE_TIER_TOOLS.size;
-  console.error(`Coinversaa Pulse MCP server running on stdio (${toolCount} tools, ${API_KEY ? 'full access' : 'free tier'})`);
+  const toolCount = API_KEY ? TOTAL_TOOL_COUNT : FREE_TIER_TOOLS.size;
+  console.error(`Coinversa Pulse MCP server running on stdio (${toolCount} tools, ${API_KEY ? 'full access' : 'free tier'})`);
 }
 
 main().catch((error) => {

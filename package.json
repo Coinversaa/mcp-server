@@ -1,7 +1,7 @@
 {
     "name": "@coinversaa/mcp-server",
-    "version": "0.5.0",
-    "description": "Coinversaa Pulse — Crypto intelligence MCP server for AI agents. 39 tools covering Hyperliquid trader analytics, syncer-backed risk routes, cohort intelligence, live market data, builder dex markets, and more.",
+    "version": "0.6.0",
+    "description": "Coinversa Pulse — Crypto intelligence MCP server for AI agents. 42 tools covering Hyperliquid trader analytics, syncer-backed risk routes, cohort intelligence, live market data, builder dex markets, canonical cross-market asset taxonomy (PAXG↔GOLD), and more.",
     "type": "module",
     "bin": {
         "coinversaa-mcp": "./build/index.js"
@@ -36,7 +36,7 @@
         "claude",
         "cursor"
     ],
-    "author": "Coinversaa <hello@coinversaa.ai> (https://coinversaa.ai)",
+    "author": "Coinversa <hello@coinversaa.ai> (https://coinversa.ai)",
     "homepage": "https://github.com/coinversaa/mcp-server#readme",
     "repository": {
         "type": "git",
