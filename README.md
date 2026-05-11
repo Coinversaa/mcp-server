@@ -4,11 +4,32 @@
 
 Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, indexed trade history with PnL attribution, behavioral cohorts, and live market data through any MCP-compatible client. Call `pulse_global_stats` to see exact current coverage (tracked wallets, indexed trades, volume, PnL, data window).
 
-**Now with builder dex support** — trade commodities (gold, silver, oil), stocks (TSLA, AAPL), and perps across 8 dexes and 369+ markets.
+**Now with HIP-4 outcome contracts and builder dex support** — inspect prediction-market style outcome contracts, settlements, commodities (gold, silver, oil), stocks (TSLA, AAPL), and perps across 8 dexes and 369+ markets.
+
+## What's new in 0.7.0
+
+**HIP-4 outcome contract intelligence.** v0.7.0 adds 12 tools for discovering active outcomes, reading question metadata, inspecting settlements and recent fills, tracking daily volume, ranking outcome traders, measuring outcome/perp overlap, and joining outcome holders to their currently open perp positions on the same underlying asset.
+
+| New tool | What it answers |
+|----------|-----------------|
+| `hip4_outcomes` | "What outcome contracts are active right now?" |
+| `hip4_outcome` | "What is outcome 123 and what side tokens does it use?" |
+| `hip4_outcome_summary` | "How much volume/PnL has this outcome done across both sides?" |
+| `hip4_outcome_recent_trades` | "Show me recent fills for this prediction market." |
+| `hip4_questions` | "What HIP-4 questions and named outcomes exist?" |
+| `hip4_recent_settlements` | "Which outcomes settled recently and which side won?" |
+| `hip4_daily_volume` | "Is HIP-4 outcome volume growing day by day?" |
+| `hip4_most_active` | "Which outcome contracts are most active?" |
+| `hip4_top_traders` | "Who are the top outcome traders?" |
+| `hip4_trader_outcomes` | "What outcomes did this wallet trade?" |
+| `hip4_cross_product_overlap` | "How much overlap is there between outcome traders and perp traders?" |
+| `hip4_perp_position_context` | "Do outcome 25 traders currently have open BTC perp exposure, and is it aligned or hedged?" |
+
+Tool count: **43 → 55**. An API key is required for every tool; backend tiering determines which tools and limits are available. Get a key from [coinversa.ai/developers](https://coinversa.ai/developers).
 
 ## What's new in 0.6.0
 
-**Canonical cross-market asset taxonomy.** The same underlying asset can appear under different tickers on different venues (e.g. `GOLD` on xyz, `PAXG` on native Hyperliquid — both track gold). v0.6.0 adds 3 new tools that resolve synonyms server-side and aggregate across venues, plus a ground-truth OI tool:
+**Canonical cross-market asset taxonomy.** The same underlying asset can appear under different tickers on different venues (e.g. `GOLD` on xyz, `PAXG` on native Hyperliquid — both track gold). v0.6.0 added 3 tools that resolve synonyms server-side and aggregate across venues, plus a ground-truth OI tool:
 
 | New tool | What it answers |
 |----------|-----------------|
@@ -19,32 +40,38 @@ Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, i
 
 Synonyms baked in: `PAXG → GOLD`, `XAUT → GOLD`, `XAGT → SILVER`. Prefix grouping (`BTC` ≡ `flx:BTC` ≡ `hyna:BTC`) works automatically.
 
-Tool count: **39 → 43**. Free tier remains **7 keyless tools**. The new tools require an API key — a free-tier key from [coinversa.ai/developers](https://coinversa.ai/developers) takes 10 seconds to create and unlocks them.
-
 Other 0.6.0 housekeeping: default API URL points at production; removed stale hard-coded "710K+ wallets / 1.8B+ trades" marketing figures (call `pulse_global_stats` for current coverage); `pulse_market_overview` kept as a deprecated alias for the canonical `list_markets`.
 
 ## Quick Start
 
-### Option A: Free Tier (No API Key)
+### API Key Required
 
-Try it instantly — no sign-up needed. 7 keyless tools with rate limits:
+Get a key at [coinversa.ai/developers](https://coinversa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
+
+You can connect in two ways:
+
+| Method | Endpoint / command | Best for |
+|--------|--------------------|----------|
+| Hosted Remote MCP | `https://mcp.coinversa.ai/mcp` | Remote MCP clients and custom connectors that support Streamable HTTP |
+| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.7.0` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
+
+Remote MCP clients should send the Coinversa key as either `Authorization: Bearer cvsa_...` or `X-API-Key: cvsa_...`.
+
+Local MCP clients must pass `COINVERSAA_API_KEY`:
 
 ```json
 {
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server"]
+      "args": ["-y", "@coinversaa/mcp-server@0.7.0"],
+      "env": {
+        "COINVERSAA_API_KEY": "cvsa_your_key_here"
+      }
     }
   }
 }
 ```
-
-For all 43 tools and higher rate limits, get an API key (Option B).
-
-### Option B: Full Access (API Key)
-
-Get a key at [coinversa.ai/developers](https://coinversa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
 
 #### Claude Desktop
 
@@ -55,7 +82,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac) or 
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server"],
+      "args": ["-y", "@coinversaa/mcp-server@0.7.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -73,7 +100,7 @@ Add to `.cursor/mcp.json` in your project root:
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server"],
+      "args": ["-y", "@coinversaa/mcp-server@0.7.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -85,7 +112,7 @@ Add to `.cursor/mcp.json` in your project root:
 #### Claude Code
 
 ```bash
-claude mcp add coinversaa -- npx -y @coinversaa/mcp-server
+claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@0.7.0
 ```
 
 Set the env var in your shell:
@@ -93,7 +120,68 @@ Set the env var in your shell:
 export COINVERSAA_API_KEY="cvsa_your_key_here"
 ```
 
-That's it. No cloning, no building — `npx` handles everything.
+That's it. No cloning, no building — `npx` handles everything for local MCP.
+
+## Remote MCP (HTTPS Connector)
+
+Hosted remote endpoint:
+
+```text
+https://mcp.coinversa.ai/mcp
+```
+
+Use the hosted endpoint with remote MCP clients such as Perplexity custom
+connectors, or any MCP client that supports Streamable HTTP.
+
+The npm / stdio workflow above remains the recommended path for Claude Desktop,
+Cursor, Claude Code, Codex, and other local MCP clients.
+
+For remote MCP clients such as Perplexity custom connectors, this repo also
+ships a separate HTTP entrypoint:
+
+```bash
+npm run build
+PORT=3000 npm run start:http
+```
+
+Remote endpoints:
+
+| Endpoint | Transport | Notes |
+|----------|-----------|-------|
+| `/mcp` | Streamable HTTP | Recommended remote MCP endpoint |
+| `/sse` | HTTP + SSE | Legacy compatibility endpoint |
+| `/health` | JSON | Health check |
+
+Authentication is read-only API-key forwarding. The remote MCP accepts a
+Coinversa key via either header:
+
+```text
+Authorization: Bearer cvsa_...
+X-API-Key: cvsa_...
+```
+
+The remote server forwards that key to the Coinversa API as `X-API-Key`. If no
+key is supplied, MCP requests are rejected. The default backend is production (`https://api.coinversa.ai`); set
+`COINVERSAA_API_URL` only for self-hosted or staging deployments.
+
+Coinversa's hosted production Remote MCP URL is:
+
+```text
+https://mcp.coinversa.ai/mcp
+```
+
+For self-hosted deployments, run `build/remote.js` behind TLS at your own stable
+URL.
+
+Optional deployment env vars:
+
+| Variable | Purpose |
+|----------|---------|
+| `PORT` | HTTP port, default `3000` |
+| `HOST` | Bind host, default `0.0.0.0` |
+| `COINVERSAA_API_URL` | Backend API base URL override |
+| `COINVERSAA_REMOTE_ALLOWED_HOSTS` | Comma-separated allowed Host headers |
+| `COINVERSAA_REMOTE_ALLOW_ENV_API_KEY=true` | Allow env-key fallback for private/internal deployments only |
 
 ## Builder Dex Markets
 
@@ -146,29 +234,9 @@ Numbers are illustrative — call `pulse_cross_market_asset` with `canonical: "G
 
 The 3 asset tools call `/api/public/v1/assets*` endpoints on the production Coinversa backend (`https://api.coinversa.ai`). Self-hosted or forked setups need to run a backend that exposes these routes; see the Coinversa backend repo for the reference implementation.
 
-## Available Tools (43)
+## Available Tools (55)
 
-### Free Tier (No API Key Required)
-
-These 7 tools work without an API key, with IP-based rate limits:
-
-| Tool | Rate Limit | Description |
-|------|-----------|-------------|
-| `pulse_global_stats` | 10/min | Total traders, trades, volume across Hyperliquid (call this for current coverage numbers) |
-| `list_markets` | 5/min | Every trading symbol with dex, price, volume, OI |
-| `pulse_market_overview` | 5/min | Deprecated alias for `list_markets` — kept for backward compatibility |
-| `market_price` | 30/min | Current mark price for any symbol |
-| `market_orderbook` | 10/min | Bid/ask depth for any trading pair |
-| `pulse_most_traded_coins` | 5/min | Most actively traded coins by volume |
-| `live_long_short_ratio` | 5/min | Global or per-coin long/short ratio |
-
-Daily cap: 500 requests/day per IP.
-
-**Cross-market asset tools and `live_official_oi` require an API key** — even a free-tier one. Grab one from [coinversa.ai/developers](https://coinversa.ai/developers) in 10 seconds.
-
-### Full Access (API Key Required — 36 additional tools)
-
-All 43 tools with 100 req/min per key. Includes cross-market asset taxonomy, trader profiles, cohort intelligence, syncer-backed risk routes, closed positions, historical analytics, official per-dex OI, and more.
+All 55 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
 
 ### Risk Tools Freshness
 
@@ -219,6 +287,27 @@ One asset, many venues, many tickers. Server-side resolution of synonyms (PAXG�
 | `list_assets` | Directory of canonical assets — every asset grouped by economic exposure, with venues, synonyms, and a cross-market flag. Use `crossMarketOnly: true` to filter to multi-venue assets. |
 | `list_asset` | Single canonical lookup with venue breakdown. Accepts synonyms — `list_asset({canonical: "PAXG"})` returns the GOLD asset. |
 | `pulse_cross_market_asset` | Aggregated per-venue long/short/bias/OI for one asset, plus cross-venue totals and a `biasRange` metric (venues agree vs disagree on direction). The agent-native answer to "is X crowded?" and "do venues disagree on Y?". |
+
+### HIP-4 — Outcome Contracts (v0.7.0)
+
+Prediction-market style outcome contracts indexed from Hyperliquid. Outcome side coins use `#<encoding>` where `encoding = 10 * outcomeId + side`; side tokens use `+<encoding>`.
+
+Backend tiering is enforced by the Coinversa API. "Free" below means a free API key is still required.
+
+| Tool | Tier | Inputs | Backend route | Returns / use it for |
+|------|------|--------|---------------|----------------------|
+| `hip4_outcomes` | Free API key | `hours` 1-168, default 24 | `GET /hip4/outcomes` | Recently active outcomes with `outcomeId`, optional question metadata, parsed `priceBinary`, side tokens, coin keys, asset IDs, fills, unique wallets, notional USDH, first/last traded. Use to discover active prediction markets. |
+| `hip4_outcome` | Free API key | `outcomeId` | `GET /hip4/outcomes/{outcome_id}` | Detail for one outcome ID from mainnet launch onward. Returns the same outcome shape as discovery, including fallback side tokens if metadata is unavailable. |
+| `hip4_outcome_summary` | Starter+ | `outcomeId` | `GET /hip4/outcomes/{outcome_id}/summary` | Two-sided aggregate: side 0/1 contracts, side notional USDH, total notional, realized PnL, fills, unique wallets, first/last traded. Use for "how big was this market?" and PnL/volume summaries. |
+| `hip4_outcome_recent_trades` | Free API key | `outcomeId`, `hours` 1-168 default 24, `limit` 1-500 default 100 | `GET /hip4/outcomes/{outcome_id}/recent-trades` | Recent real fills only, excluding settlement, pair-redeem, and auction-phase fills. Returns trade time, wallet, `coin`, `sideIndex`, side label, `dirId`, price, size, PnL, and fee. |
+| `hip4_questions` | Free API key | none | `GET /hip4/questions` | Hyperliquid `outcomeMeta` question catalog: question IDs, names, descriptions, fallback outcome, named outcome IDs, settled named outcomes, and parsed fields such as class, underlying, expiry, period, and price thresholds. |
+| `hip4_recent_settlements` | Free API key | `hours` 1-720 default 168, `limit` 1-200 default 50 | `GET /hip4/settlements/recent` | Recent settlements with outcome ID, settlement time, winning side when determinable, winner/loser fill counts, total winner payout, and total loser loss. |
+| `hip4_daily_volume` | Free API key | `days` 1-60, default 14 | `GET /hip4/daily-volume` | Daily trajectory since the requested cutoff: fills, unique trades, unique wallets, contracts, and notional USDH. Use for adoption/activity trend questions. |
+| `hip4_most_active` | Free API key | `hours` 1-168 default 24, `limit` 1-50 default 10 | `GET /hip4/most-active` | Top outcomes by recent fill count, with metadata and side tokens when available. Use to rank current outcome-market activity. |
+| `hip4_top_traders` | Starter+ | `days` 1-30 default 7, `limit` 1-100 default 25 | `GET /hip4/top-traders` | Outcome trader leaderboard: address, fills, distinct outcomes, total contracts, total notional USDH, and realized PnL. |
+| `hip4_trader_outcomes` | Starter+ | `address`, `days` 1-365 default 30 | `GET /hip4/trader/{address}/outcomes` | One wallet's outcome history: outcome ID, side index, side token, fills, net shares, gross bought/sold USDH, realized PnL, first/last traded. Use for wallet-level outcome due diligence. |
+| `hip4_cross_product_overlap` | Pro+ | `days` 1-30 default 7 | `GET /hip4/cross-product/overlap` | Counts HIP-4 outcome traders, perp traders, overlap count, and overlap percentage. Use to answer whether outcome activity is isolated or shared with perp traders. |
+| `hip4_perp_position_context` | Pro+ | `outcomeId`, `days` 1-60 default 14, `limit` 1-100 default 25 | `GET /hip4/outcomes/{outcome_id}/perp-position-context` | Joins current net-positive outcome holders to currently open perp positions on the same underlying. Returns side-level overlap, long/short counts, net underlying position, notional, aligned vs hedge counts, prediction-native counts, and top wallets with signal labels. Use to answer whether outcome traders are directionally exposed, hedged, or prediction-native. |
 
 ### Pulse — Trader Profiles
 
@@ -309,26 +398,37 @@ Once connected, try asking your AI:
 - "Is ETH more crowded on HYNA or native Hyperliquid?"
 - "Do the dexes disagree on gold direction?"
 - "What does Hyperliquid's own Info API say BTC OI is — does it match our number?"
+- "Which HIP-4 outcome contracts are most active today?"
+- "Show me recent trades for outcome 123"
+- "Which HIP-4 outcomes settled recently?"
+- "Who are the top HIP-4 outcome traders this week?"
+- "For outcome 25, are Yes traders already long BTC or mostly prediction-native?"
+- "Did outcome traders overlap with perp traders over the last 7 days?"
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `COINVERSAA_API_KEY` | No | — | Your API key (starts with `cvsa_`). Without it, only the 7 keyless free tools are available. |
+| `COINVERSAA_API_KEY` | Yes | — | Your API key (starts with `cvsa_`). Required for every tool. |
 | `COINVERSAA_API_URL` | No | `https://api.coinversa.ai` | Override the API host. Only needed if you operate your own Coinversa backend (self-hosted or fork). |
 
 ## Rate Limits
 
-**Free tier:** Per-route limits (5-30/min) + 500 requests/day per IP. See the free tier table for details.
+Rate limits are enforced by API-key tier:
 
-**Paid tier (API key):** 100 requests/minute, no daily cap.
+| Tier | Requests/min | Daily cap | Monthly cap |
+|------|--------------|-----------|-------------|
+| Free API key | 30 | 1,000 | — |
+| Starter | 120 | 2,000 | 50,000 |
+| Pro | 600 | 20,000 | 500,000 |
+| Enterprise | Custom | Custom | Custom |
 
 Rate limit headers are included in every response:
 - `X-RateLimit-Limit`: your configured limit
 - `X-RateLimit-Remaining`: requests left in current window
 - `X-RateLimit-Reset`: seconds until window resets
-- `X-RateLimit-Tier`: `free` or `paid`
-- `X-RateLimit-Daily-Remaining`: (free tier only) requests left today
+- `X-RateLimit-Tier`: your API-key tier
+- `X-RateLimit-Daily-Remaining`: requests left today, when a daily cap applies
 
 ## Development
 
