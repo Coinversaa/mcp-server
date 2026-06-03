@@ -1,7 +1,7 @@
 ---
 name: coinversaa-pulse
-description: "Read-only crypto intelligence for AI agents. 55 API-key-authenticated tools for Hyperliquid trader analytics, behavioral cohorts, HIP-4 outcome contracts, outcome/perp position context, syncer-backed risk data, live market data, builder dex markets, commodities, stocks, indices, cross-market asset taxonomy, liquidation heatmaps, official per-dex OI, and whale tracking across the full Hyperliquid wallet universe. This skill does not trade, sign transactions, move funds, request private keys, custody assets, or require wallet approvals. Call pulse_global_stats for live coverage totals."
-version: 0.7.0
+description: "Read-only crypto intelligence for AI agents. 82 API-key-authenticated tools for Hyperliquid trader analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, behavioral cohorts, HIP-4 outcome contracts, outcome/perp position context, syncer-backed risk data, live market data, builder dex markets, commodities, stocks, indices, cross-market asset taxonomy, liquidation heatmaps, official per-dex OI, and whale tracking across the full Hyperliquid wallet universe. This skill does not trade, sign transactions, move funds, request private keys, custody assets, or require wallet approvals. Call pulse_global_stats for live coverage totals."
+version: 0.8.0
 author: Coinversa <chat@coinversaa.ai>
 homepage: https://coinversa.ai
 repository: https://github.com/coinversaa/mcp-server
@@ -33,7 +33,7 @@ env:
 
 Coinversa Pulse is a **read-only crypto intelligence MCP skill** for AI agents.
 
-It lets MCP-compatible clients query Hyperliquid market data, trader behavior, cohort analytics, liquidation data, open interest, builder dex markets, HIP-4 outcome contracts, cross-market asset exposure, and wallet-level trading history.
+It lets MCP-compatible clients query Hyperliquid market data, trader behavior, position lifecycles, execution quality, cohort analytics, liquidation data, open interest, builder dex markets, HIP-4 outcome contracts, cross-market asset exposure, and wallet-level trading history.
 
 This skill is designed for **market research and analytics only**.
 
@@ -108,7 +108,7 @@ You can connect in two ways:
 | Method | Endpoint / command | Best for |
 |--------|--------------------|----------|
 | Hosted Remote MCP | `https://mcp.coinversa.ai/mcp` | Remote MCP clients and custom connectors that support Streamable HTTP |
-| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.7.0` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
+| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.8.0` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
 
 Remote MCP clients should send the Coinversa key as either:
 
@@ -146,7 +146,7 @@ Add:
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.7.0"],
+      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -164,7 +164,7 @@ Add to `.cursor/mcp.json`:
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.7.0"],
+      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -176,7 +176,7 @@ Add to `.cursor/mcp.json`:
 #### Claude Code
 
 ```bash
-claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@0.7.0
+claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@0.8.0
 export COINVERSAA_API_KEY="cvsa_your_key_here"
 ```
 
@@ -317,10 +317,11 @@ Use HIP-4 tools when users ask about outcomes, prediction markets, questions, se
 
 ## Tools
 
-55 total read-only analytics tools:
+82 total read-only analytics tools:
 
 - 43 existing Hyperliquid market, trader, cohort, risk, cross-market asset, and live analytics tools
 - 12 HIP-4 outcome-contract tools
+- 27 position-lifecycle, execution-quality, trader-archetype, market-structure, comparison, and recent-cohort tools
 - All tools require a Coinversa API key
 - The Coinversa API enforces tier-specific access
 
@@ -353,6 +354,35 @@ Do not treat syncer-backed analytics as guaranteed live execution truth or exact
 
 ---
 
+## Position Lifecycles & Execution Quality
+
+For new wallet-level position analysis, prefer the 0.8 lifecycle tools over the legacy closed-position tools.
+
+A lifecycle is one reconstructed position from open to close, including scale-ins, scale-outs, entry/exit VWAP, realized PnL, fees, hold duration, liquidation state, and related fills. Most lifecycle routes use a 90-day rolling window and exclude spot pairs by default unless an `includeSpot` option is present.
+
+Recommended workflow:
+
+| User intent | First tool to call | Follow-up tools |
+|-------------|--------------------|-----------------|
+| "Give me a quick read on this wallet" | `pulse_trader_demo` | `pulse_trader_lifecycle_summary`, `pulse_trader_token_stats` |
+| "Is this trader actually good?" | `pulse_trader_lifecycle_summary` | `pulse_trader_lifecycles`, `pulse_wallet_drawdown_curve`, `pulse_compare` |
+| "Show their positions" | `pulse_trader_lifecycles` | `pulse_lifecycle` for a specific lifecycle ID |
+| "How much pain do they tolerate?" | `pulse_wallet_drawdown_curve` | `pulse_max_pain_events` |
+| "Do they exit well?" | `pulse_perfect_exits` | `pulse_trader_lifecycles` |
+| "Who recovered after getting crushed?" | `pulse_survivors` | `pulse_anti_survivors`, `pulse_persistent_winners` |
+| "Who is hot right now?" | `pulse_cohort_recent_lifecycle_stats` | `pulse_cohort_recent_positions`, `pulse_cohort_recent_trades` |
+| "Which market creates or destroys alpha?" | `pulse_coin_alpha_map` | `pulse_lethal_coins`, `pulse_style_distribution` |
+
+Legacy tools:
+
+- `pulse_trader_closed_positions`
+- `pulse_trader_closed_position_stats`
+- `pulse_recent_closed_positions`
+
+Use them when the user explicitly asks for the old closed-position payload or a global recent-closed feed. Otherwise, prefer lifecycle tools.
+
+---
+
 ## Tool Groups
 
 ### Pulse — Trader Intelligence
@@ -366,6 +396,10 @@ Do not treat syncer-backed analytics as guaranteed live execution truth or exact
 - `pulse_biggest_trades` — Biggest winning or losing trades.
 - `pulse_recent_trades` — Biggest recent trades in a time window.
 - `pulse_token_leaderboard` — Top traders for a specific coin.
+- `pulse_coin_alpha_map` — Winner/loser profit pools per coin.
+- `pulse_hour_profitability` — PnL heatmap by UTC close hour.
+- `pulse_market_concentration` — How concentrated alpha is across wallets.
+- `pulse_style_distribution` — PnL split by hold-duration style.
 
 ### Pulse — Trader Profiles
 
@@ -373,11 +407,32 @@ Tools taking `address` expect a full Ethereum address: `0x` plus 40 hex characte
 
 - `pulse_trader_profile`
 - `pulse_trader_performance`
+- `pulse_trader_demo`
+- `pulse_trader_lifecycle_summary`
+- `pulse_trader_lifecycles`
+- `pulse_lifecycle`
+- `pulse_wallet_drawdown_curve`
 - `pulse_trader_trades`
 - `pulse_trader_daily_stats`
 - `pulse_trader_token_stats`
-- `pulse_trader_closed_positions`
-- `pulse_trader_closed_position_stats`
+- `pulse_trader_closed_positions` — legacy; prefer `pulse_trader_lifecycles`.
+- `pulse_trader_closed_position_stats` — legacy; prefer `pulse_trader_lifecycle_summary`.
+
+### Pulse — Lifecycle Discovery
+
+- `pulse_max_pain_events`
+- `pulse_perfect_exits`
+- `pulse_backstop_events`
+- `pulse_survivors`
+- `pulse_anti_survivors`
+- `pulse_persistent_winners`
+- `pulse_capital_titans`
+- `pulse_one_month_wonders`
+- `pulse_newcomer_whales`
+- `pulse_coin_kings`
+- `pulse_top_liquidators`
+- `pulse_lethal_coins`
+- `pulse_compare`
 
 ### Pulse — Cohort Intelligence
 
@@ -401,6 +456,11 @@ Tools:
 - `pulse_cohort_history`
 - `pulse_cohort_bias_history`
 - `pulse_cohort_performance_daily`
+- `pulse_cohort_recent_positions`
+- `pulse_cohort_recent_trades`
+- `pulse_cohort_recent_lifecycle_stats`
+- `pulse_cohort_recent_top_positions`
+- `pulse_cohort_recent_alpha_concentration`
 
 ### Market — Live Data
 

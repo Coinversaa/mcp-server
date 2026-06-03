@@ -6,6 +6,40 @@ Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, i
 
 **Now with HIP-4 outcome contracts and builder dex support** — inspect prediction-market style outcome contracts, settlements, commodities (gold, silver, oil), stocks (TSLA, AAPL), and perps across 8 dexes and 369+ markets.
 
+## What's new in 0.8.0
+
+**Position lifecycles, execution quality, and trader archetypes.** v0.8.0 adds 28 tools built on a fully re-derived position-lifecycle dataset — every open→close cycle reconstructed from on-chain fills, now carrying MAE/MFE (the worst adverse and best favorable price each position ever saw). This unlocks execution-quality analysis, not just PnL.
+
+| New tool | What it answers |
+|----------|-----------------|
+| `pulse_trader_lifecycles` | "Show me every open→close position for this wallet, with entry/exit and hold time." |
+| `pulse_trader_lifecycle_summary` | "What are this wallet's position-level stats — win rate, avg hold, biggest win/loss?" |
+| `pulse_lifecycle` | "Break down lifecycle 12345 into every fill that built and unwound it." |
+| `pulse_trader_demo` | "Give me a quick wallet brief before a deeper dive." |
+| `pulse_wallet_drawdown_curve` | "How far underwater did each of this wallet's positions go before working?" |
+| `pulse_max_pain_events` | "Which winners survived the deepest drawdowns before recovering?" |
+| `pulse_perfect_exits` | "Which exits captured most of the maximum favorable move?" |
+| `pulse_backstop_events` | "What were the most catastrophic individual liquidations?" |
+| `pulse_survivors` / `pulse_anti_survivors` | "Who blew up and recovered — and who never did?" |
+| `pulse_persistent_winners` | "Who is profitable across multiple distinct months, not just lucky once?" |
+| `pulse_capital_titans` | "Who extracts the most PnL per dollar of fees paid?" |
+| `pulse_one_month_wonders` | "Who had one huge month then gave it back?" |
+| `pulse_newcomer_whales` | "Who just showed up and is already trading big notional?" |
+| `pulse_coin_kings` | "Who is the top earner of each coin?" |
+| `pulse_top_liquidators` | "Who profits most by liquidating others?" |
+| `pulse_lethal_coins` | "Which coins blow people up most often?" |
+| `pulse_coin_alpha_map` | "Per coin, how big are the winner vs loser profit pools?" |
+| `pulse_hour_profitability` | "What UTC hour of close is most profitable?" |
+| `pulse_market_concentration` | "How concentrated is alpha — do the top 1% take everything?" |
+| `pulse_style_distribution` | "Do scalpers or swing traders make more money?" |
+| `pulse_compare` | "Head-to-head: who is the better trader, A or B?" |
+| `pulse_cohort_recent_*` | "What are wallets that are printing RIGHT NOW (last-30-day tier) doing — positions, trades, top lifecycles, concentration?" |
+| `pulse_lifecycles_recent` | "What just closed exchange-wide right now?" (global feed; successor to `pulse_recent_closed_positions`) |
+
+The legacy closed-position tools (`pulse_trader_closed_positions`, `pulse_trader_closed_position_stats`, `pulse_recent_closed_positions`) are kept for backward compatibility but **superseded** by the lifecycle tools, which read the corrected `position_lifecycles_full` table (more history, MAE/MFE, spot).
+
+Tool count: **55 → 83**. An API key is required for every tool; backend tiering determines which tools and limits are available.
+
 ## What's new in 0.7.0
 
 **HIP-4 outcome contract intelligence.** v0.7.0 adds 12 tools for discovering active outcomes, reading question metadata, inspecting settlements and recent fills, tracking daily volume, ranking outcome traders, measuring outcome/perp overlap, and joining outcome holders to their currently open perp positions on the same underlying asset.
@@ -53,7 +87,7 @@ You can connect in two ways:
 | Method | Endpoint / command | Best for |
 |--------|--------------------|----------|
 | Hosted Remote MCP | `https://mcp.coinversa.ai/mcp` | Remote MCP clients and custom connectors that support Streamable HTTP |
-| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.7.0` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
+| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.8.0` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
 
 Remote MCP clients should send the Coinversa key as either `Authorization: Bearer cvsa_...` or `X-API-Key: cvsa_...`.
 
@@ -64,7 +98,7 @@ Local MCP clients must pass `COINVERSAA_API_KEY`:
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.7.0"],
+      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -82,7 +116,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac) or 
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.7.0"],
+      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -100,7 +134,7 @@ Add to `.cursor/mcp.json` in your project root:
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.7.0"],
+      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -112,7 +146,7 @@ Add to `.cursor/mcp.json` in your project root:
 #### Claude Code
 
 ```bash
-claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@0.7.0
+claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@0.8.0
 ```
 
 Set the env var in your shell:
@@ -234,9 +268,9 @@ Numbers are illustrative — call `pulse_cross_market_asset` with `canonical: "G
 
 The 3 asset tools call `/api/public/v1/assets*` endpoints on the production Coinversa backend (`https://api.coinversa.ai`). Self-hosted or forked setups need to run a backend that exposes these routes; see the Coinversa backend repo for the reference implementation.
 
-## Available Tools (55)
+## Available Tools (82)
 
-All 55 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
+All 83 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
 
 ### Risk Tools Freshness
 
@@ -309,17 +343,37 @@ Backend tiering is enforced by the Coinversa API. "Free" below means a free API 
 | `hip4_cross_product_overlap` | Pro+ | `days` 1-30 default 7 | `GET /hip4/cross-product/overlap` | Counts HIP-4 outcome traders, perp traders, overlap count, and overlap percentage. Use to answer whether outcome activity is isolated or shared with perp traders. |
 | `hip4_perp_position_context` | Pro+ | `outcomeId`, `days` 1-60 default 14, `limit` 1-100 default 25 | `GET /hip4/outcomes/{outcome_id}/perp-position-context` | Joins current net-positive outcome holders to currently open perp positions on the same underlying. Returns side-level overlap, long/short counts, net underlying position, notional, aligned vs hedge counts, prediction-native counts, and top wallets with signal labels. Use to answer whether outcome traders are directionally exposed, hedged, or prediction-native. |
 
+### Position Lifecycles — 0.8.0
+
+The lifecycle tools are the preferred position-level surface for new agents. A lifecycle is one reconstructed open->close position, including scale-ins, scale-outs, realized PnL, fees, hold time, and liquidation state. Use the older closed-position tools only when you specifically need the legacy closed-position payload or global recent-closed feed.
+
+| Goal | Recommended tool |
+|------|------------------|
+| Quick wallet read | `pulse_trader_demo` |
+| Wallet-level position stats | `pulse_trader_lifecycle_summary` |
+| Full wallet lifecycle history | `pulse_trader_lifecycles` |
+| Drill into one position's fills | `pulse_lifecycle` |
+| MAE/MFE pain and exit timing | `pulse_wallet_drawdown_curve`, `pulse_max_pain_events`, `pulse_perfect_exits` |
+| Find trader archetypes | `pulse_survivors`, `pulse_anti_survivors`, `pulse_persistent_winners`, `pulse_capital_titans`, `pulse_one_month_wonders`, `pulse_newcomer_whales` |
+| Market-wide lifecycle structure | `pulse_coin_alpha_map`, `pulse_hour_profitability`, `pulse_market_concentration`, `pulse_style_distribution` |
+| Compare wallets | `pulse_compare` |
+| Analyze currently-hot cohorts | `pulse_cohort_recent_positions`, `pulse_cohort_recent_trades`, `pulse_cohort_recent_lifecycle_stats`, `pulse_cohort_recent_top_positions`, `pulse_cohort_recent_alpha_concentration` |
+
 ### Pulse — Trader Profiles
 
 | Tool | Description |
 |------|-------------|
 | `pulse_trader_profile` | Full due diligence on any wallet (PnL, win rate, tiers, profit factor) |
 | `pulse_trader_performance` | 30-day vs all-time comparison with trend direction |
+| `pulse_trader_demo` | Fast wallet briefing: lifecycle summary plus recent top wins and losses |
 | `pulse_trader_trades` | Recent trades for any wallet — the copy-trading signal |
 | `pulse_trader_daily_stats` | Day-by-day PnL, win rate, and volume breakdown |
 | `pulse_trader_token_stats` | Per-coin P&L breakdown (find a trader's edge) |
-| `pulse_trader_closed_positions` | Historical position lifecycle — entry/exit prices, hold duration, PnL |
-| `pulse_trader_closed_position_stats` | Aggregate stats: avg hold time, position win rate, scalper vs swing |
+| `pulse_trader_lifecycle_summary` | Preferred 0.8 wallet position summary — wins/losses, liquidation count, hold time, fees, biggest win/loss |
+| `pulse_trader_lifecycles` | Preferred 0.8 lifecycle history — one reconstructed open->close position per row |
+| `pulse_lifecycle` | One lifecycle by ID, including composing fills |
+| `pulse_trader_closed_positions` | Legacy closed-position payload; prefer `pulse_trader_lifecycles` for new position analysis |
+| `pulse_trader_closed_position_stats` | Legacy aggregate stats; prefer `pulse_trader_lifecycle_summary` for new position analysis |
 
 ### Pulse — Cohort Intelligence
 
@@ -453,7 +507,7 @@ This isn't a wrapper around a public blockchain API. Coinversa indexes Hyperliqu
 - **Live cohort positions**: See what the best traders are holding in real-time
 - **Real-time trade feed**: Every trade by any wallet or cohort, queryable by time window
 - **Liquidation heatmaps**: Cluster analysis across price levels for any coin
-- **Closed position analytics**: Full position lifecycle with hold duration and entry/exit analysis
+- **Position lifecycle analytics**: Reconstructed open->close lifecycles with hold duration, entry/exit VWAP, realized PnL, fees, liquidation state, and MAE/MFE execution-quality analysis
 - **Hidden gem discovery**: Find skilled traders that ranking sites miss
 - **Open interest history**: Hourly OI snapshots for any coin, up to 30 days back
 - **Cohort bias history**: Track how smart money, whales, and other tiers shifted long/short over time

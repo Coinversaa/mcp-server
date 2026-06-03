@@ -17,7 +17,7 @@ export interface CoinversaServerOptions {
   apiUrl?: string;
 }
 
-export const COINVERSA_TOTAL_TOOL_COUNT = 55;
+export const COINVERSA_TOTAL_TOOL_COUNT = 83;
 export const DEFAULT_COINVERSA_API_URL = "https://api.coinversa.ai";
 
 export function createCoinversaServer(options: CoinversaServerOptions = {}) {
@@ -222,6 +222,45 @@ perp traders.
   already have open positions in the same underlying asset/perp, or whether
   a side looks directional, hedged, or prediction-native
 
+POSITION LIFECYCLES (open->close cycles with MAE/MFE):
+A "lifecycle" is one full position reconstructed from on-chain fills: open -> scale
+-> close, with entry/exit VWAP, hold duration, realized PnL, fees, liquidation
+status, and (for perps) MAE/MFE — the worst adverse and best favorable price the
+position ever saw while open. 90-day rolling window; spot (@-prefixed) excluded.
+- pulse_trader_lifecycles        → one wallet's lifecycle history
+- pulse_trader_lifecycle_summary → one wallet's aggregate lifecycle stats
+- pulse_lifecycle                → one lifecycle by ID + every composing fill
+- pulse_trader_demo              → quick wallet brief: summary + recent wins/losses
+
+EXECUTION QUALITY (MAE/MFE-derived, perp-only):
+Use these to judge HOW a position was traded, not just its PnL:
+- pulse_wallet_drawdown_curve → per-position drawdown (MAE) and run-up (MFE) curve
+- pulse_max_pain_events       → winners that survived deep drawdowns before recovering
+- pulse_perfect_exits         → exits that captured most of the max favorable move
+- pulse_backstop_events       → the most catastrophic individual liquidations
+
+TRADER ARCHETYPES (90-day lifecycle discovery):
+- pulse_survivors / pulse_anti_survivors → blew to a deep trough then recovered / never did
+- pulse_persistent_winners   → profitable across multiple distinct months
+- pulse_capital_titans       → best PnL per dollar of fees paid
+- pulse_one_month_wonders    → huge in one month, gave it back
+- pulse_newcomer_whales      → recent first lifecycle, already moving big notional
+- pulse_coin_kings           → top earner(s) per coin
+- pulse_top_liquidators      → wallets that profit by liquidating others
+- pulse_lethal_coins         → coins with the highest per-lifecycle liquidation rate
+
+MARKET STRUCTURE (aggregate lifecycle analytics, no address needed):
+- pulse_coin_alpha_map       → per-coin winner/loser/net profit pools
+- pulse_hour_profitability   → global PnL by UTC hour of close
+- pulse_market_concentration → power-law: which percentile bands hold the profits
+- pulse_style_distribution   → HFT vs swing vs holder PnL split
+- pulse_compare              → side-by-side lifecycle summary of 2-5 wallets
+
+REFRESHED COHORTS (30-day rolling tier label, not all-time):
+The pulse_cohort_recent_* tools label wallets by their LAST-30-DAY tier
+(pnl_tier_recent / size_tier_recent) instead of lifetime tier — catching regime
+changes the all-time cohort tools miss (e.g. who is printing RIGHT NOW).
+
 COHORT TIERS:
 Wallets are classified into two tier systems:
 - PnL tiers (by profitability): money_printer, smart_money, grinder, humble_earner, exit_liquidity, semi_rekt, full_rekt, giga_rekt
@@ -234,7 +273,7 @@ TIPS:
 
 const server = new McpServer({
   name: "coinversaa-pulse",
-  version: "0.7.0",
+  version: "0.8.0",
 }, {
   instructions: SERVER_INSTRUCTIONS,
 });
@@ -862,7 +901,7 @@ if (shouldRegister("pulse_cohort_history")) server.registerTool(
 if (shouldRegister("pulse_trader_closed_positions")) server.registerTool(
   "pulse_trader_closed_positions",
   {
-    description: "Get closed position history for any wallet. Shows every position that was opened and closed — with entry/exit prices, hold duration, PnL, and leverage. Use this to analyze a trader's position lifecycle and timing patterns. Answers: 'Show me all historical positions for this trader', 'What was the PnL and duration of each position?', 'When did this whale close their massive ETH long?'",
+    description: "Closed-position history for a wallet from the legacy closed_positions table (entry/exit prices, hold duration, PnL, leverage). SUPERSEDED by pulse_trader_lifecycles, which reads the corrected position_lifecycles_full table — more history, MAE/MFE execution quality, and spot coverage. Prefer pulse_trader_lifecycles; kept for backward compatibility.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       address: ethAddressSchema,
@@ -884,7 +923,7 @@ if (shouldRegister("pulse_trader_closed_positions")) server.registerTool(
 if (shouldRegister("pulse_trader_closed_position_stats")) server.registerTool(
   "pulse_trader_closed_position_stats",
   {
-    description: "Get aggregate statistics about a trader's closed positions: average hold duration, win rate by position (not by fill), total positions closed, and PnL summary. Use this to understand how long a trader typically holds and their position-level performance. Answers: 'What is this trader's average hold time?', 'Win rate by position (not by fill)?', 'Is this trader a scalper or swing trader?', 'Average PnL per position?'",
+    description: "Aggregate stats for a wallet's closed positions (avg hold duration, position win rate, total positions, PnL summary) from the legacy closed_positions table. SUPERSEDED by pulse_trader_lifecycle_summary, which reads the corrected position_lifecycles_full table (richer, more history). Prefer pulse_trader_lifecycle_summary; kept for backward compatibility.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       address: ethAddressSchema,
@@ -899,7 +938,7 @@ if (shouldRegister("pulse_trader_closed_position_stats")) server.registerTool(
 if (shouldRegister("pulse_recent_closed_positions")) server.registerTool(
   "pulse_recent_closed_positions",
   {
-    description: "Get recently closed positions across all traders. See what positions were just closed in the last N minutes/hours — with entry/exit prices and hold duration. Filterable by coin, minimum notional size, and hold duration range. Use to find: sub-second HFT trades (maxDuration=1000), positions that just got stopped out, large positions that just closed (minNotional=100000), quick scalps vs long holds.",
+    description: "Global feed of recently closed positions across all traders, from the legacy closed_positions table. SUPERSEDED by pulse_lifecycles_recent, which reads the corrected position_lifecycles_full table (adds MAE/MFE + spot coverage). Prefer pulse_lifecycles_recent; kept for backward compatibility.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       since: sinceSchema.default("1h"),
@@ -917,6 +956,34 @@ if (shouldRegister("pulse_recent_closed_positions")) server.registerTool(
     if (minDuration != null) params.minDuration = String(minDuration);
     if (maxDuration != null) params.maxDuration = String(maxDuration);
     return toolResult(await callAPI(useToonFormat, "/pulse/closed-positions/recent", params));
+  }
+);
+
+// ══════════════════════════════════════════════════════════
+// v0.8.0 — Global Recent Lifecycles (successor to pulse_recent_closed_positions)
+// ══════════════════════════════════════════════════════════
+if (shouldRegister("pulse_lifecycles_recent")) server.registerTool(
+  "pulse_lifecycles_recent",
+  {
+    description: "Global feed of the most recently CLOSED position lifecycles across ALL wallets — 'what just closed exchange-wide right now'. Reads the corrected position_lifecycles_full table: includes MAE/MFE (when backfilled), a liquidation flag, and optional spot. Cross-wallet successor to pulse_recent_closed_positions. Filter by coin, minNotional, hold-duration range, and time window. Note: the very freshest closes may not have MAE/MFE yet — the risk backfill lags real-time, so recent rows can show null MAE/MFE.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      since: sinceSchema.default("1h"),
+      limit: z.number().min(1).max(200).default(50).describe("Number of lifecycles to return."),
+      coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER)."),
+      includeSpot: z.boolean().default(false).describe("Include spot (@-prefixed) pairs. Default false (perps only)."),
+      minNotional: z.number().optional().describe("Minimum notional in USD (peak_size * entry_vwap), e.g. 100000 for $100K+ positions."),
+      minDuration: z.number().optional().describe("Minimum hold duration in milliseconds (e.g. 60000 for >= 1 minute)."),
+      maxDuration: z.number().optional().describe("Maximum hold duration in milliseconds (e.g. 1000 for sub-second HFT)."),
+    },
+  },
+  async ({ useToonFormat, since, limit, coin, includeSpot, minNotional, minDuration, maxDuration }) => {
+    const params: Record<string, string> = { since, limit: String(limit), includeSpot: String(includeSpot) };
+    if (coin) params.coin = normalizeCoin(coin);
+    if (minNotional != null) params.minNotional = String(minNotional);
+    if (minDuration != null) params.minDuration = String(minDuration);
+    if (maxDuration != null) params.maxDuration = String(maxDuration);
+    return toolResult(await callAPI(useToonFormat, "/pulse/lifecycles/recent", params));
   }
 );
 
@@ -1255,6 +1322,471 @@ if (shouldRegister("hip4_perp_position_context")) server.registerTool(
       days: String(days),
       limit: String(limit),
     }))
+);
+
+// ══════════════════════════════════════════════════════════
+// v0.8.0 — POSITION LIFECYCLE SUITE
+// ══════════════════════════════════════════════════════════
+
+// ─── Position Lifecycles (per wallet) ─────────────────────
+if (shouldRegister("pulse_trader_lifecycles")) server.registerTool(
+  "pulse_trader_lifecycles",
+  {
+    description: "Get a wallet's position lifecycle history — every open->close cycle reconstructed from on-chain fills, with entry/exit VWAP, peak size, hold duration, realized PnL, fees, fill count, and liquidation status. Richer than closed-positions: each row is a full position lifecycle. 90-day rolling window; spot (@-prefixed) excluded by default. Use for deep position-level due diligence and timing analysis.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      address: ethAddressSchema,
+      coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH). For builder dex: prefix:COIN (e.g. xyz:SILVER)."),
+      status: z.enum(["open", "closed", "all"]).default("closed").describe("Lifecycle status filter. Default 'closed'."),
+      includeSpot: z.boolean().default(false).describe("Include spot (@-prefixed) pairs. Default false (perps only)."),
+      includeCensored: z.boolean().default(false).describe("Include censored/low-quality lifecycles. Default false."),
+      limit: z.number().min(1).max(200).default(50).describe("Number of lifecycles to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, address, coin, status, includeSpot, includeCensored, limit, offset }) => {
+    const params: Record<string, string> = {
+      status, includeSpot: String(includeSpot), includeCensored: String(includeCensored),
+      limit: String(limit), offset: String(offset),
+    };
+    if (coin) params.coin = normalizeCoin(coin);
+    return toolResult(await callAPI(useToonFormat, `/pulse/trader/${address}/lifecycles`, params));
+  }
+);
+
+// ─── Lifecycle Summary (per wallet) ───────────────────────
+if (shouldRegister("pulse_trader_lifecycle_summary")) server.registerTool(
+  "pulse_trader_lifecycle_summary",
+  {
+    description: "Get a wallet's aggregate position-lifecycle stats: total/closed/open count, wins, losses, liquidations, win rate, total & avg PnL, biggest win/loss, avg/min/max hold duration, total fees, and unique coins traded. Same 90-day rolling window as pulse_trader_lifecycles. Use to size up a trader's position-level performance in one call.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      address: ethAddressSchema,
+      coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH). For builder dex: prefix:COIN."),
+      includeSpot: z.boolean().default(false).describe("Include spot (@-prefixed) pairs. Default false."),
+      includeCensored: z.boolean().default(false).describe("Include censored lifecycles. Default false."),
+    },
+  },
+  async ({ useToonFormat, address, coin, includeSpot, includeCensored }) => {
+    const params: Record<string, string> = { includeSpot: String(includeSpot), includeCensored: String(includeCensored) };
+    if (coin) params.coin = normalizeCoin(coin);
+    return toolResult(await callAPI(useToonFormat, `/pulse/trader/${address}/lifecycle-summary`, params));
+  }
+);
+
+// ─── Single Lifecycle by ID (+ composing fills) ───────────
+if (shouldRegister("pulse_lifecycle")) server.registerTool(
+  "pulse_lifecycle",
+  {
+    description: "Look up one position lifecycle by its numeric ID, including every trade fill that composed it (timestamp, side, size, price, PnL, fee, tx hash) joined from the trades table within the open->close window. Use after pulse_trader_lifecycles to drill into exactly how a single position was built and unwound.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      id: z.number().int().min(1).describe("Lifecycle ID (from pulse_trader_lifecycles)."),
+    },
+  },
+  async ({ useToonFormat, id }) =>
+    toolResult(await callAPI(useToonFormat, `/pulse/lifecycle/${id}`))
+);
+
+// ─── Trader Demo / Quick Brief ───────────────────────────
+if (shouldRegister("pulse_trader_demo")) server.registerTool(
+  "pulse_trader_demo",
+  {
+    description: "Get a fast wallet briefing for demos and agent triage: lifecycle summary plus recent top wins and losses. Use when the user wants a quick read on a trader before deciding whether to run deeper lifecycle, drawdown, or token-level analysis.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      address: ethAddressSchema,
+    },
+  },
+  async ({ useToonFormat, address }) =>
+    toolResult(await callAPI(useToonFormat, `/pulse/trader/${address}/demo`))
+);
+
+// ══════════════════════════════════════════════════════════
+// v0.8.0 — EXECUTION QUALITY (MAE/MFE, perp-only)
+// ══════════════════════════════════════════════════════════
+
+// ─── Wallet Drawdown Curve ────────────────────────────────
+if (shouldRegister("pulse_wallet_drawdown_curve")) server.registerTool(
+  "pulse_wallet_drawdown_curve",
+  {
+    description: "Get a wallet's per-position drawdown (MAE) and run-up (MFE) curve: for each closed perp lifecycle, the worst adverse price excursion and best favorable excursion vs entry, as percentages. Use to judge a trader's pain tolerance and exit timing — 'how far underwater did they go before it worked?'. Perp-only (spot has no MAE).",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      address: ethAddressSchema,
+      limit: z.number().min(1).max(500).default(100).describe("Number of positions to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, address, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, `/pulse/wallet-drawdown-curve/${address}`, { limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Max-Pain Events ──────────────────────────────────────
+if (shouldRegister("pulse_max_pain_events")) server.registerTool(
+  "pulse_max_pain_events",
+  {
+    description: "Find the biggest survived drawdowns: closed perp positions that went deeply underwater (high MAE) yet still closed in profit. These are 'diamond hands' winners that nearly blew up first. Returns the position, entry/MAE/exit prices, realized PnL, and max drawdown %. Filtered to material positions (minPnl) with bounded drawdowns.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      minDrawdownPct: z.number().min(0).default(10).describe("Minimum drawdown % (MAE vs entry) to qualify. Default 10."),
+      minPnl: z.number().min(0).default(1000).describe("Minimum realized PnL in USD to filter noise. Default 1000."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of events to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, minDrawdownPct, minPnl, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/max-pain-events", {
+      minDrawdownPct: String(minDrawdownPct), minPnl: String(minPnl),
+      limit: String(limit), offset: String(offset),
+    }))
+);
+
+// ─── Perfect Exits ────────────────────────────────────────
+if (shouldRegister("pulse_perfect_exits")) server.registerTool(
+  "pulse_perfect_exits",
+  {
+    description: "Find positions that exited near the top: closed perp positions whose exit captured a high fraction of the maximum favorable excursion (MFE). These are well-timed exits. Returns the position, entry/exit/MFE prices, realized PnL, and MFE capture % (capped at 100). Filtered to material positions (minPnl) with a real favorable move.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      minCapturePct: z.number().min(0).max(100).default(90).describe("Minimum MFE capture % to qualify. Default 90."),
+      minPnl: z.number().min(0).default(1000).describe("Minimum realized PnL in USD to filter noise. Default 1000."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of exits to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, minCapturePct, minPnl, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/perfect-exits", {
+      minCapturePct: String(minCapturePct), minPnl: String(minPnl),
+      limit: String(limit), offset: String(offset),
+    }))
+);
+
+// ─── Backstop Events (catastrophic liquidations) ──────────
+if (shouldRegister("pulse_backstop_events")) server.registerTool(
+  "pulse_backstop_events",
+  {
+    description: "Get the most catastrophic individual liquidations across Hyperliquid — large forced closes ranked by loss. Returns wallet, coin, side, entry VWAP, peak size, realized PnL, penalty fee, liquidation method, and liquidator address. Use for 'who got wrecked hardest?' and post-mortem analysis. Default returns $10k+ losses.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      method: z.string().optional().describe("Optional liquidation method filter (e.g. 'market', 'backstop')."),
+      maxRealizedPnl: z.number().max(0).default(-10000).describe("Only return losses at least this large (negative). Default -10000 = $10k+ losses."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of events to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, method, maxRealizedPnl, limit, offset }) => {
+    const params: Record<string, string> = { maxRealizedPnl: String(maxRealizedPnl), limit: String(limit), offset: String(offset) };
+    if (method) params.method = method;
+    return toolResult(await callAPI(useToonFormat, "/pulse/backstop-events", params));
+  }
+);
+
+// ══════════════════════════════════════════════════════════
+// v0.8.0 — TRADER ARCHETYPES (90-day lifecycle discovery)
+// ══════════════════════════════════════════════════════════
+
+// ─── Survivors ────────────────────────────────────────────
+if (shouldRegister("pulse_survivors")) server.registerTool(
+  "pulse_survivors",
+  {
+    description: "Find comeback traders: wallets whose cumulative realized PnL hit a deep trough and then climbed back to positive. Returns wallet, trough depth, current cumulative PnL, and recovery amount. Use for 'who blew up but recovered?'. Realized-PnL drawdown only.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      maxTrough: z.number().max(0).default(-10000).describe("Trough must be at least this deep (negative). Default -10000."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, maxTrough, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/survivors", { maxTrough: String(maxTrough), limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Anti-Survivors ───────────────────────────────────────
+if (shouldRegister("pulse_anti_survivors")) server.registerTool(
+  "pulse_anti_survivors",
+  {
+    description: "Find wallets that blew up and never recovered — cumulative realized PnL hit a deep trough and is still underwater. Returns wallet, trough depth, and current cumulative PnL. Use for 'who got rekt and stayed rekt?'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      maxTrough: z.number().max(0).default(-10000).describe("Trough must be at least this deep (negative). Default -10000."),
+      stillUnderwater: z.number().max(0).default(0).describe("Current cumulative PnL must be at or below this (negative or 0). Default 0."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, maxTrough, stillUnderwater, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/anti-survivors", {
+      maxTrough: String(maxTrough), stillUnderwater: String(stillUnderwater),
+      limit: String(limit), offset: String(offset),
+    }))
+);
+
+// ─── Persistent Winners ───────────────────────────────────
+if (shouldRegister("pulse_persistent_winners")) server.registerTool(
+  "pulse_persistent_winners",
+  {
+    description: "Find consistently profitable wallets: traders that were profitable in N+ distinct calendar months of the 90-day window. Returns wallet, profitable-month count, total PnL, and best-month PnL. Use for 'who is consistently good, not just lucky once?'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      minMonths: z.number().int().min(1).max(3).default(2).describe("Minimum number of profitable months (1-3). Default 2."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, minMonths, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/persistent-winners", { minMonths: String(minMonths), limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Capital Titans ───────────────────────────────────────
+if (shouldRegister("pulse_capital_titans")) server.registerTool(
+  "pulse_capital_titans",
+  {
+    description: "Find the most fee-efficient traders: highest realized PnL per dollar of fees paid. Returns wallet, total PnL, total fees, PnL-per-fee-dollar ratio, and lifecycle count. Use for 'who extracts the most edge per dollar spent on fees?'. minPnl/minFees gates filter out noise.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      minPnl: z.number().min(0).default(10000).describe("Minimum total PnL in USD. Default 10000."),
+      minFees: z.number().min(0).default(100).describe("Minimum total fees in USD. Default 100."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, minPnl, minFees, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/capital-titans", {
+      minPnl: String(minPnl), minFees: String(minFees), limit: String(limit), offset: String(offset),
+    }))
+);
+
+// ─── One-Month Wonders ────────────────────────────────────
+if (shouldRegister("pulse_one_month_wonders")) server.registerTool(
+  "pulse_one_month_wonders",
+  {
+    description: "Find flash-in-the-pan traders: big winners in a single month who then gave it back. Returns wallet, best-month PnL, total PnL, giveback amount, active months, and profitable months. Use for 'who had one great month then faded?'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      minBestMonth: z.number().min(0).default(50000).describe("Minimum best-month PnL in USD to qualify. Default 50000."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, minBestMonth, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/one-month-wonders", { minBestMonth: String(minBestMonth), limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Newcomer Whales ──────────────────────────────────────
+if (shouldRegister("pulse_newcomer_whales")) server.registerTool(
+  "pulse_newcomer_whales",
+  {
+    description: "Find new big players: wallets whose first-ever lifecycle is recent but who have already moved large notional. Returns wallet, first-seen date, gross notional, total PnL, and lifecycle count. Use for 'who just showed up and is already trading big?'. Lower minNotional if no rows return at default.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      newcomerDays: z.number().int().min(1).max(90).default(30).describe("How recent the first lifecycle must be, in days. Default 30."),
+      minNotional: z.number().min(0).default(100000).describe("Minimum gross notional in USD. Default 100000."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, newcomerDays, minNotional, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/newcomer-whales", {
+      newcomerDays: String(newcomerDays), minNotional: String(minNotional),
+      limit: String(limit), offset: String(offset),
+    }))
+);
+
+// ─── Coin Kings ───────────────────────────────────────────
+if (shouldRegister("pulse_coin_kings")) server.registerTool(
+  "pulse_coin_kings",
+  {
+    description: "Find the top earner(s) per coin within the window. perCoinRank=1 returns only the #1 earner ('king') of each coin; higher values return the top-N per coin. Returns coin, wallet, coin PnL, fees, lifecycle count, and rank. Use for 'who owns BTC?' / 'who is the best trader of each market?'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      perCoinRank: z.number().int().min(1).max(10).default(1).describe("Top-N earners per coin to return. 1 = the king only. Default 1."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of rows to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, perCoinRank, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/coin-kings", { perCoinRank: String(perCoinRank), limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Top Liquidators ──────────────────────────────────────
+if (shouldRegister("pulse_top_liquidators")) server.registerTool(
+  "pulse_top_liquidators",
+  {
+    description: "Find wallets that profit by liquidating others' forced closes. Returns liquidator wallet, liquidations executed, distinct victims, distinct coins, total penalty collected, and total liquidation PnL. Use for 'who is the biggest backstop/liquidation player?'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/top-liquidators", { limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Lethal Coins ─────────────────────────────────────────
+if (shouldRegister("pulse_lethal_coins")) server.registerTool(
+  "pulse_lethal_coins",
+  {
+    description: "Find the most dangerous markets: coins with the highest per-lifecycle liquidation rate. Returns coin, total lifecycles, liquidations, liquidation %, and total penalty. Use for 'which coins blow people up most often?'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      minLifecycles: z.number().int().min(1).default(100).describe("Minimum lifecycles for a coin to qualify (filters thin markets). Default 100."),
+      limit: z.number().min(1).max(500).default(50).describe("Number of coins to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, minLifecycles, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/lethal-coins", { minLifecycles: String(minLifecycles), limit: String(limit), offset: String(offset) }))
+);
+
+// ══════════════════════════════════════════════════════════
+// v0.8.0 — MARKET STRUCTURE (aggregate lifecycle analytics)
+// ══════════════════════════════════════════════════════════
+
+// ─── Coin Alpha Map ───────────────────────────────────────
+if (shouldRegister("pulse_coin_alpha_map")) server.registerTool(
+  "pulse_coin_alpha_map",
+  {
+    description: "Per-coin profit pools split into winners vs losers vs net. Returns coin, lifecycles, unique wallets, winners pool, losers pool, net PnL, winning/losing lifecycle counts, and total fees. Use for 'which coins are net wealth creators vs destroyers?'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      limit: z.number().min(1).max(500).default(100).describe("Number of coins to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/coin-alpha-map", { limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Hour Profitability ───────────────────────────────────
+if (shouldRegister("pulse_hour_profitability")) server.registerTool(
+  "pulse_hour_profitability",
+  {
+    description: "Global PnL heatmap by UTC hour of position close. Returns, for each of the 24 hours, lifecycle count, total PnL, avg PnL, wins, and losses. Use for 'what time of day is most profitable to close?' / session-bias analysis.",
+    inputSchema: { useToonFormat: useToonFormatSchema },
+  },
+  async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/pulse/hour-profitability"))
+);
+
+// ─── Market Concentration ─────────────────────────────────
+if (shouldRegister("pulse_market_concentration")) server.registerTool(
+  "pulse_market_concentration",
+  {
+    description: "Power-law shape of trader profits: percentile bands (top 0.1%, 1%, 10%, ...) and each band's share of total profits. Returns band label, wallet count, band PnL, % of total profits, and rank range. Use for 'how concentrated is alpha — do the top 1% take everything?'.",
+    inputSchema: { useToonFormat: useToonFormatSchema },
+  },
+  async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/pulse/market-concentration"))
+);
+
+// ─── Style Distribution ───────────────────────────────────
+if (shouldRegister("pulse_style_distribution")) server.registerTool(
+  "pulse_style_distribution",
+  {
+    description: "HFT vs swing vs holder PnL split, bucketed by lifecycle hold duration. Returns, per style bucket, lifecycle count, unique wallets, total PnL, avg PnL, and total fees. Use for 'do scalpers or swing traders make more money on Hyperliquid?'.",
+    inputSchema: { useToonFormat: useToonFormatSchema },
+  },
+  async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/pulse/style-distribution"))
+);
+
+// ─── Compare Wallets ──────────────────────────────────────
+if (shouldRegister("pulse_compare")) server.registerTool(
+  "pulse_compare",
+  {
+    description: "Side-by-side comparison of 2-5 wallets via their lifecycle summaries — win rate, total/avg PnL, hold duration, biggest win/loss, fees, liquidations. Use for head-to-head trader comparison ('who is the better trader, A or B?').",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      wallets: z.array(ethAddressSchema).min(2).max(5).describe("2 to 5 wallet addresses to compare."),
+    },
+  },
+  async ({ useToonFormat, wallets }) =>
+    toolResult(await callAPI(useToonFormat, "/pulse/compare", { wallets: wallets.join(",") }))
+);
+
+// ══════════════════════════════════════════════════════════
+// v0.8.0 — REFRESHED COHORTS (30-day rolling tier label)
+// ══════════════════════════════════════════════════════════
+
+// ─── Recent-Cohort Positions ──────────────────────────────
+if (shouldRegister("pulse_cohort_recent_positions")) server.registerTool(
+  "pulse_cohort_recent_positions",
+  {
+    description: "Live positions held by a cohort defined by its LAST-30-DAY tier (pnl_tier_recent / size_tier_recent), not lifetime tier. Surfaces what currently-printing wallets are positioned for right now — catches regime changes the all-time pulse_cohort_positions misses.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      tierType: z.enum(["pnl", "size"]).describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers."),
+      tier: tierSchema,
+      limit: z.number().min(1).max(500).default(50).describe("Number of positions to return."),
+    },
+  },
+  async ({ useToonFormat, tierType, tier, limit }) =>
+    toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${tier}/positions`, { limit: String(limit) }))
+);
+
+// ─── Recent-Cohort Trades ─────────────────────────────────
+if (shouldRegister("pulse_cohort_recent_trades")) server.registerTool(
+  "pulse_cohort_recent_trades",
+  {
+    description: "Recent trades by a cohort defined by its LAST-30-DAY tier (pnl_tier_recent / size_tier_recent). Shows what currently-printing wallets have been trading in the window — real-time alpha weighted to who is hot NOW, not all-time.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      tierType: z.enum(["pnl", "size"]).describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers."),
+      tier: tierSchema,
+      since: sinceSchema.default("1h"),
+      limit: z.number().min(1).max(500).default(50).describe("Number of trades to return."),
+    },
+  },
+  async ({ useToonFormat, tierType, tier, since, limit }) =>
+    toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${tier}/trades`, { since, limit: String(limit) }))
+);
+
+// ─── Recent-Cohort Lifecycle Stats ────────────────────────
+if (shouldRegister("pulse_cohort_recent_lifecycle_stats")) server.registerTool(
+  "pulse_cohort_recent_lifecycle_stats",
+  {
+    description: "Per-wallet lifecycle stats for a cohort defined by its LAST-30-DAY tier: lifecycles, wins, losses, liquidations, total PnL, fees, avg hold, biggest win/loss, plus the wallet's recent pnl/size tier labels. Use for position-level analysis of who is currently printing.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      tierType: z.enum(["pnl", "size"]).describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers."),
+      tier: tierSchema,
+      limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, tierType, tier, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${tier}/lifecycle-stats`, { limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Recent-Cohort Top Positions ──────────────────────────
+if (shouldRegister("pulse_cohort_recent_top_positions")) server.registerTool(
+  "pulse_cohort_recent_top_positions",
+  {
+    description: "Top closed position lifecycles by a cohort defined by its LAST-30-DAY tier: the biggest/most notable open->close cycles from currently-printing wallets, with entry/exit VWAP, hold duration, realized PnL, fees, and liquidation flag.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      tierType: z.enum(["pnl", "size"]).describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers."),
+      tier: tierSchema,
+      limit: z.number().min(1).max(500).default(50).describe("Number of positions to return."),
+      offset: z.number().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, tierType, tier, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${tier}/top-positions`, { limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Recent-Cohort Alpha Concentration ────────────────────
+if (shouldRegister("pulse_cohort_recent_alpha_concentration")) server.registerTool(
+  "pulse_cohort_recent_alpha_concentration",
+  {
+    description: "How concentrated profit is WITHIN a recent-tier cohort: percentile bands of the cohort's wallets and each band's share of the cohort's total PnL. Returns band, wallet count, band PnL, % of tier PnL, and tier total wallets. Use for 'within the hot money_printer cohort, do a few wallets carry everything?'.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      tierType: z.enum(["pnl", "size"]).describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers."),
+      tier: tierSchema,
+    },
+  },
+  async ({ useToonFormat, tierType, tier }) =>
+    toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${tier}/alpha-concentration`))
 );
 
 return server;

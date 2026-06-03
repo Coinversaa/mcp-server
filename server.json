@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Coinversaa/mcp-server",
-  "description": "Crypto intelligence for AI agents. Hyperliquid trader analytics, HIP-4 outcome contracts, outcome/perp position context, cohorts, live market data, builder-dex markets, and cross-market asset taxonomy. API key required.",
+  "description": "Crypto intelligence for AI agents. Hyperliquid trader analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, HIP-4 outcome contracts, outcome/perp position context, all-time & 30-day-refreshed cohorts, live market data, builder-dex markets, and cross-market asset taxonomy. API key required.",
   "repository": {
     "url": "https://github.com/coinversaa/mcp-server",
     "source": "github"
   },
-  "version": "0.7.0",
+  "version": "0.8.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@coinversaa/mcp-server",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "transport": {
         "type": "stdio"
       },
