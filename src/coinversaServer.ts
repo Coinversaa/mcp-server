@@ -17,7 +17,7 @@ export interface CoinversaServerOptions {
   apiUrl?: string;
 }
 
-export const COINVERSA_TOTAL_TOOL_COUNT = 83;
+export const COINVERSA_TOTAL_TOOL_COUNT = 86;
 export const DEFAULT_COINVERSA_API_URL = "https://api.coinversa.ai";
 
 export function createCoinversaServer(options: CoinversaServerOptions = {}) {
@@ -288,6 +288,21 @@ COHORT TIERS:
 Wallets are classified into two tier systems:
 - PnL tiers (by profitability): money_printer, smart_money, grinder, humble_earner, exit_liquidity, semi_rekt, full_rekt, giga_rekt
 - Size tiers (by volume): leviathan, tidal_whale, whale, small_whale, apex_predator, dolphin, fish, shrimp
+
+ENTITY RESOLUTION (v0.9):
+- pulse_entity_profile resolves ANY wallet to its owner entity (master + named
+  sub-accounts + combined open book). pulse_entity_leaderboard ranks OWNERS,
+  not wallets. Use these whenever the user asks who is behind a wallet or
+  wants leaderboards that don't double-count multi-account traders. [Pro tier]
+- Responses may include a 'verified' stamp — the chain-state block this data
+  was last reconciled against; cite it when the user asks how fresh/accurate
+  the data is.
+
+PLANS & LIMITS:
+- pulse_my_plan shows the caller's tier, limits, and every tier's limits.
+  Call it when a request is rejected for tier or rate-limit reasons, then
+  relay the specific upgrade guidance (tier-gate errors include an upgrade
+  URL).
 
 TIPS:
 - When a user mentions a commodity (gold, silver, oil) or stock (TSLA, AAPL), check builder dex markets with list_markets
