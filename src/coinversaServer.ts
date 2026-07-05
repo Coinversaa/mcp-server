@@ -17,7 +17,7 @@ export interface CoinversaServerOptions {
   apiUrl?: string;
 }
 
-export const COINVERSA_TOTAL_TOOL_COUNT = 86;
+export const COINVERSA_TOTAL_TOOL_COUNT = 89;
 export const DEFAULT_COINVERSA_API_URL = "https://api.coinversa.ai";
 
 export function createCoinversaServer(options: CoinversaServerOptions = {}) {
@@ -297,6 +297,12 @@ ENTITY RESOLUTION (v0.9):
 - Responses may include a 'verified' stamp — the chain-state block this data
   was last reconciled against; cite it when the user asks how fresh/accurate
   the data is.
+
+EXCHANGE AGGREGATES (v0.9):
+- pulse_exchange_volume / pulse_exchange_oi / pulse_active_traders give 24h
+  volume, open interest (long/short split), and active traders — PER DEX.
+  Builder dexes (HIP-3) are ~43% of Hyperliquid volume; most trackers'
+  headline numbers count native only, so cite the by-dex split when comparing.
 
 PLANS & LIMITS:
 - pulse_my_plan shows the caller's tier, limits, and every tier's limits.
@@ -1864,6 +1870,36 @@ if (shouldRegister("pulse_entity_leaderboard")) server.registerTool(
   },
   async ({ useToonFormat, limit, offset }) =>
     toolResult(await callAPI(useToonFormat, "/entities/leaderboard", { limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Exchange Volume by Dex [FREE] ────────────────────────
+if (shouldRegister("pulse_exchange_volume")) server.registerTool(
+  "pulse_exchange_volume",
+  {
+    description: "24h trading volume for the WHOLE exchange, split by dex: native Hyperliquid ('hl') plus every builder dex (xyz, hyna, ...), with per-dex match counts and distinct traders. Use for 'how much volume does Hyperliquid do?' — and note builder dexes are ~43% of it, which most public trackers' headline numbers omit. Aggregates cached up to 120s.",
+    inputSchema: { useToonFormat: useToonFormatSchema },
+  },
+  async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/exchange/volume"))
+);
+
+// ─── Exchange Open Interest by Dex [FREE] ─────────────────
+if (shouldRegister("pulse_exchange_oi")) server.registerTool(
+  "pulse_exchange_oi",
+  {
+    description: "Current open interest for the whole exchange by dex, with long/short notional split. Gross both-sides convention (matches HyperTracker/hl.eco headlines; halve for one-sided OI). Use for 'what's the OI on Hyperliquid / on xyz?', market-size questions, and long-vs-short balance checks. Cached up to 120s.",
+    inputSchema: { useToonFormat: useToonFormatSchema },
+  },
+  async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/exchange/oi"))
+);
+
+// ─── Active Traders 24h [FREE] ────────────────────────────
+if (shouldRegister("pulse_active_traders")) server.registerTool(
+  "pulse_active_traders",
+  {
+    description: "Distinct wallets that filled at least one perp trade in the last 24h, exchange-wide, plus total match count. The 'daily active traders' headline number. Cached up to 120s.",
+    inputSchema: { useToonFormat: useToonFormatSchema },
+  },
+  async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/exchange/active-traders"))
 );
 
 return server;
