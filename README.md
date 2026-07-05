@@ -6,6 +6,20 @@ Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, i
 
 **Now with HIP-4 outcome contracts and builder dex support** — inspect prediction-market style outcome contracts, settlements, commodities (gold, silver, oil), stocks (TSLA, AAPL), and perps across 8 dexes and 369+ markets.
 
+## What's new in 0.9.0
+
+**Entity resolution, tier-aware sessions, and chain-verified answers.**
+
+| New tool | What it answers |
+|----------|-----------------|
+| `pulse_entity_profile` [Pro] | "Who owns this wallet — and what is their REAL combined book across every sub-account?" |
+| `pulse_entity_leaderboard` [Pro] | "Top traders deduped by OWNER, not wallet — a fund running 35 sub-accounts shows as one entity." |
+| `pulse_my_plan` | "What plan is this API key on, what are the limits, and what does upgrading unlock?" |
+
+Also in 0.9.0:
+- **Tier-aware errors** — a tier-gated or rate-limited request now explains the caller's tier, the required tier, and carries a direct upgrade link. (Fixes valid free-tier keys being told their key was "rejected" on Pro endpoints.)
+- **Verified-vs-chain stamps** — entity responses carry the chain-state block they were last reconciled against.
+
 ## What's new in 0.8.0
 
 **Position lifecycles, execution quality, and trader archetypes.** v0.8.0 adds 28 tools built on a fully re-derived position-lifecycle dataset — every open→close cycle reconstructed from on-chain fills, now carrying MAE/MFE (the worst adverse and best favorable price each position ever saw). This unlocks execution-quality analysis, not just PnL.
@@ -87,7 +101,7 @@ You can connect in two ways:
 | Method | Endpoint / command | Best for |
 |--------|--------------------|----------|
 | Hosted Remote MCP | `https://mcp.coinversa.ai/mcp` | Remote MCP clients and custom connectors that support Streamable HTTP |
-| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.8.0` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
+| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.9.0` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
 
 Remote MCP clients should send the Coinversa key as either `Authorization: Bearer cvsa_...` or `X-API-Key: cvsa_...`.
 
@@ -98,7 +112,7 @@ Local MCP clients must pass `COINVERSAA_API_KEY`:
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
+      "args": ["-y", "@coinversaa/mcp-server@0.9.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -116,7 +130,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac) or 
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
+      "args": ["-y", "@coinversaa/mcp-server@0.9.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -134,7 +148,7 @@ Add to `.cursor/mcp.json` in your project root:
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
+      "args": ["-y", "@coinversaa/mcp-server@0.9.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -146,7 +160,7 @@ Add to `.cursor/mcp.json` in your project root:
 #### Claude Code
 
 ```bash
-claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@0.8.0
+claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@0.9.0
 ```
 
 Set the env var in your shell:

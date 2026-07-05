@@ -311,7 +311,7 @@ TIPS:
 
 const server = new McpServer({
   name: "coinversaa-pulse",
-  version: "0.8.0",
+  version: "0.9.0",
 }, {
   instructions: SERVER_INSTRUCTIONS,
 });

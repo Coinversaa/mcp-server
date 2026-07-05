@@ -1,6 +1,6 @@
 {
     "name": "@coinversaa/mcp-server",
-    "version": "0.8.0",
+    "version": "0.9.0",
     "description": "Coinversa Pulse — Crypto intelligence MCP server for AI agents. 83 tools covering Hyperliquid trader analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, HIP-4 outcome contracts, outcome/perp position context, syncer-backed risk routes, all-time and 30-day-refreshed cohort intelligence, live market data, builder dex markets, canonical cross-market asset taxonomy (PAXG↔GOLD), and remote HTTP connectors.",
     "type": "module",
     "bin": {
