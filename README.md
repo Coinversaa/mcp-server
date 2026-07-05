@@ -15,6 +15,9 @@ Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, i
 | `pulse_entity_profile` [Pro] | "Who owns this wallet — and what is their REAL combined book across every sub-account?" |
 | `pulse_entity_leaderboard` [Pro] | "Top traders deduped by OWNER, not wallet — a fund running 35 sub-accounts shows as one entity." |
 | `pulse_my_plan` | "What plan is this API key on, what are the limits, and what does upgrading unlock?" |
+| `pulse_exchange_volume` | "24h volume — total and per dex (builder dexes are ~43% and most trackers miss them)." |
+| `pulse_exchange_oi` | "Open interest by dex with long/short split." |
+| `pulse_active_traders` | "How many wallets traded in the last 24h?" |
 
 Also in 0.9.0:
 - **Tier-aware errors** — a tier-gated or rate-limited request now explains the caller's tier, the required tier, and carries a direct upgrade link. (Fixes valid free-tier keys being told their key was "rejected" on Pro endpoints.)
