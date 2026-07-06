@@ -17,7 +17,7 @@ export interface CoinversaServerOptions {
   apiUrl?: string;
 }
 
-export const COINVERSA_TOTAL_TOOL_COUNT = 89;
+export const COINVERSA_TOTAL_TOOL_COUNT = 91;
 export const DEFAULT_COINVERSA_API_URL = "https://api.coinversa.ai";
 
 export function createCoinversaServer(options: CoinversaServerOptions = {}) {
@@ -1900,6 +1900,29 @@ if (shouldRegister("pulse_active_traders")) server.registerTool(
     inputSchema: { useToonFormat: useToonFormatSchema },
   },
   async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/exchange/active-traders"))
+);
+
+// ─── Exchange Positions & 24h Flow [FREE] ─────────────────
+if (shouldRegister("pulse_exchange_positions")) server.registerTool(
+  "pulse_exchange_positions",
+  {
+    description: "Exchange-wide position vitals by dex: open positions and wallets holding them, plus the 24h flow — positions closed, liquidations, and TOTAL REALIZED PNL across the whole exchange (gross profits/losses split). Answers 'how many positions are open on Hyperliquid?' and 'did traders collectively make or lose money today?' — a headline no public tracker publishes. Cached up to 120s.",
+    inputSchema: { useToonFormat: useToonFormatSchema },
+  },
+  async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/exchange/positions"))
+);
+
+// ─── Daily PnL Leaders [STARTER] ──────────────────────────
+if (shouldRegister("pulse_pnl_leaders")) server.registerTool(
+  "pulse_pnl_leaders",
+  {
+    description: "Today's biggest realized winners AND losers: wallets ranked by summed realized PnL on positions CLOSED in the last 24h, with position counts and liquidation flags. Realized-on-the-day — different from the portfolio leaderboards (which rank account value over longer windows). Use for 'who made/lost the most money today?'. Requires Starter tier or higher.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      limit: z.number().int().min(1).max(100).default(20).describe("Winners and losers each capped at this count."),
+    },
+  },
+  async ({ useToonFormat, limit }) => toolResult(await callAPI(useToonFormat, "/exchange/pnl-leaders", { limit: String(limit) }))
 );
 
 return server;
