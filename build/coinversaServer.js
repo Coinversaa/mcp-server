@@ -86,7 +86,16 @@ export function createCoinversaServer(options = {}) {
                         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
                         continue;
                     }
-                    throw new Error("Rate limit exceeded. Please wait a moment and try again.");
+                    // The backend's 429 payload carries the exact cap hit, retry timing,
+                    // and an on-demand upgrade link — relay it so the agent can explain
+                    // the situation (and the fix) instead of a bare "rate limited".
+                    const body429 = await response.json().catch(() => null);
+                    const parts = [body429?.error || "Rate limit exceeded. Please wait a moment and try again."];
+                    if (body429?.retryAfterSeconds)
+                        parts.push(`Retry in ~${body429.retryAfterSeconds}s.`);
+                    if (body429?.upgrade_url)
+                        parts.push(`Higher limits are available on a paid plan — upgrade at ${body429.upgrade_url} (or call pulse_my_plan to see your current tier and every plan's limits).`);
+                    throw new Error(parts.join(" "));
                 }
                 if (response.status === 404) {
                     throw new Error("Not found. The requested resource does not exist — check the address or symbol.");
@@ -94,8 +103,22 @@ export function createCoinversaServer(options = {}) {
                 if (!response.ok) {
                     const body = await response.json().catch(() => null);
                     const msg = body?.detail || body?.error || body?.title || response.statusText;
+                    // Tier gate ≠ invalid key: a valid free-tier key hitting a Pro
+                    // endpoint gets current_tier/required_tier and a pre-built
+                    // upgrade_url from the backend — surface all of it so the agent can
+                    // tell the user what their plan is and where to upgrade.
+                    if (response.status === 403 && body?.required_tier) {
+                        const cur = body.current_tier ?? "free";
+                        const tool = body.tool && body.tool !== "unknown" ? ` (${body.tool})` : "";
+                        const upgrade = body.upgrade_url ? ` Upgrade here: ${body.upgrade_url}` : "";
+                        throw new Error(`This feature${tool} requires the ${body.required_tier} tier — the API key in use is on the ${cur} tier.${upgrade} ` +
+                            `Call pulse_my_plan for the full comparison of what each tier unlocks.`);
+                    }
                     if (response.status === 401 || response.status === 403) {
                         throw new Error(`Coinversa API key rejected (${response.status}): ${msg}`);
+                    }
+                    if (response.status === 503 && body?.error) {
+                        throw new Error(`Temporarily unavailable: ${body.error}`);
                     }
                     throw new Error(`Request failed (${response.status}): ${msg}`);
                 }
@@ -1402,5 +1425,30 @@ TIPS:
                 tier: tierSchema,
             },
         }, async ({ useToonFormat, tierType, tier }) => toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${tier}/alpha-concentration`)));
+    // ─── My Plan (tier / limits introspection) [FREE] ─────────
+    if (shouldRegister("pulse_my_plan"))
+        server.registerTool("pulse_my_plan", {
+            description: "Show the current API key's plan: tier, rate limits (per-minute/daily/monthly), and a comparison of every tier's limits with an upgrade link. Call this when the user asks what plan they're on, when a request was rejected for tier or rate-limit reasons, or before recommending an upgrade. Live remaining-quota counts also arrive on every API response as X-RateLimit-* headers.",
+            inputSchema: { useToonFormat: useToonFormatSchema },
+        }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/plan")));
+    // ─── Entity Profile (owner-level view) [PRO] ──────────────
+    if (shouldRegister("pulse_entity_profile"))
+        server.registerTool("pulse_entity_profile", {
+            description: "Resolve ANY wallet to its owner entity: the master account, every named sub-account (and weaker 'linked' wallets), each member's open book, the COMBINED open positions across all of them, and a 'verified vs chain at block N' stamp. Answers 'who owns this wallet?' and 'what is this trader's real total book across all their accounts?' — sub-accounts trade independently on Hyperliquid, so per-wallet views undercount every multi-account trader. Note: vaults appear as named sub-accounts of their creator. Requires Pro tier.",
+            inputSchema: {
+                useToonFormat: useToonFormatSchema,
+                address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).describe("Any wallet address — master, sub-account, or unknown; it resolves to the owning entity either way."),
+            },
+        }, async ({ useToonFormat, address }) => toolResult(await callAPI(useToonFormat, `/entity/${address}`)));
+    // ─── Entity Leaderboard (deduped by owner) [PRO] ──────────
+    if (shouldRegister("pulse_entity_leaderboard"))
+        server.registerTool("pulse_entity_leaderboard", {
+            description: "Top entities (owners, NOT wallets) ranked by combined gross open entry notional across all their sub-accounts. This is the deduplicated view a wallet leaderboard cannot give: a fund running 35 sub-accounts appears as ONE entity with its true combined book. System/protocol accounts are excluded. Each row: entity master address, wallet count, open position count, gross entry notional. Requires Pro tier.",
+            inputSchema: {
+                useToonFormat: useToonFormatSchema,
+                limit: z.number().int().min(1).max(100).default(25).describe("Rows to return (max 100)."),
+                offset: z.number().int().min(0).max(199).default(0).describe("Pagination offset (window capped at 200)."),
+            },
+        }, async ({ useToonFormat, limit, offset }) => toolResult(await callAPI(useToonFormat, "/entities/leaderboard", { limit: String(limit), offset: String(offset) })));
     return server;
 }
