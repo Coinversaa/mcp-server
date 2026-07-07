@@ -18,10 +18,14 @@ Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, i
 | `pulse_exchange_volume` | "24h volume — total and per dex (builder dexes are ~43% and most trackers miss them)." |
 | `pulse_exchange_oi` | "Open interest by dex with long/short split." |
 | `pulse_active_traders` | "How many wallets traded in the last 24h?" |
+| `pulse_exchange_positions` | "How many positions are open right now, per dex?" |
+| `pulse_pnl_leaders` | "Who made and lost the most in the last 24h, exchange-wide?" |
 
 Also in 0.9.0:
 - **Tier-aware errors** — a tier-gated or rate-limited request now explains the caller's tier, the required tier, and carries a direct upgrade link. (Fixes valid free-tier keys being told their key was "rejected" on Pro endpoints.)
 - **Verified-vs-chain stamps** — entity responses carry the chain-state block they were last reconciled against.
+
+Tool count: **83 → 91**.
 
 ## What's new in 0.8.0
 
@@ -287,7 +291,7 @@ The 3 asset tools call `/api/public/v1/assets*` endpoints on the production Coin
 
 ## Available Tools (82)
 
-All 83 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
+All 91 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
 
 ### Risk Tools Freshness
 
