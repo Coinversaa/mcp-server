@@ -400,14 +400,38 @@ The lifecycle tools are the preferred position-level surface for new agents. A l
 
 Every tracked Hyperliquid wallet classified into behavioral tiers — unique data nobody else has. For the current tracked-wallet count, call `pulse_global_stats`.
 
-**PnL tiers** (by profitability): `money_printer`, `smart_money`, `grinder`, `humble_earner`, `exit_liquidity`, `semi_rekt`, `full_rekt`, `giga_rekt`
+**PnL tiers** (by profitability, best to worst):
 
-**Size tiers** (by volume): `leviathan`, `tidal_whale`, `whale`, `small_whale`, `apex_predator`, `dolphin`, `fish`, `shrimp`
+| Display name | Slug | Legacy slug (still accepted) |
+|--------------|------|------------------------------|
+| Apex | `apex` | `money_printer` |
+| Sharps | `sharps` | `smart_money` |
+| Grinders | `grinders` | `grinder` |
+| Scrapers | `scrapers` | `humble_earner` |
+| The Crowd | `crowd` | `exit_liquidity` |
+| Bleeders | `bleeders` | `semi_rekt` |
+| Trapped | `trapped` | `full_rekt` |
+| Blown Out | `blown_out` | `giga_rekt` |
+
+**Size tiers** (by volume, largest to smallest):
+
+| Display name | Slug | Legacy slug (still accepted) |
+|--------------|------|------------------------------|
+| Heavyweights | `heavyweights` | `leviathan` |
+| Cruiserweights | `cruiserweights` | `tidal_whale` |
+| Middleweights | `middleweights` | `whale` |
+| Welterweights | `welterweights` | `small_whale` |
+| Lightweights | `lightweights` | `apex_predator` |
+| Featherweights | `featherweights` | `dolphin` |
+| Flyweights | `flyweights` | `fish` |
+| Strawweights | `strawweights` | `shrimp` |
+
+Tool inputs accept both vocabularies (new slugs are normalized before the API call). API responses currently still emit legacy slugs (e.g. `pnlTier: "money_printer"`).
 
 | Tool | Description |
 |------|-------------|
 | `pulse_cohort_summary` | Behavioral tier breakdown across every tracked wallet |
-| `pulse_cohort_positions` | What money_printers / whales are holding RIGHT NOW |
+| `pulse_cohort_positions` | What the Apex / Heavyweights tiers are holding RIGHT NOW |
 | `pulse_cohort_trades` | Every trade a cohort made in the last N minutes/hours |
 | `pulse_cohort_history` | Historical performance trends for any cohort |
 | `pulse_cohort_bias_history` | Historical hourly bias snapshots for all cohorts |
@@ -446,7 +470,7 @@ Every tracked Hyperliquid wallet classified into behavioral tiers — unique dat
 Once connected, try asking your AI:
 
 - "What are the top 5 traders on Hyperliquid by PnL?"
-- "Show me what the money_printer tier is holding right now"
+- "Show me what the apex tier is holding right now"
 - "What are the biggest trades in the last 10 minutes?"
 - "What did wallet 0x7fda...7d1 trade in the last hour?"
 - "Find underrated traders with 70%+ win rate"
@@ -524,7 +548,7 @@ This isn't a wrapper around a public blockchain API. Coinversa indexes Hyperliqu
 - **Canonical cross-market taxonomy**: one asset, many venues, many tickers. `list_assets` / `list_asset` / `pulse_cross_market_asset` resolve synonyms (PAXG↔GOLD, XAUT↔GOLD, XAGT↔SILVER) and aggregate OI, bias, and positions across venues — server-side, no client grouping required
 - **Builder dex markets**: Access 369+ markets across 8 dexes — commodities, stocks, indices, and perps
 - **Venue ground-truth OI**: `live_official_oi` pulls directly from Hyperliquid's Info API, cross-checkable against our derived numbers
-- **Behavioral cohorts**: every tracked wallet classified into PnL tiers (money_printer to giga_rekt) and size tiers (leviathan to shrimp)
+- **Behavioral cohorts**: every tracked wallet classified into PnL tiers (Apex to Blown Out) and size tiers (Heavyweights to Strawweights)
 - **Live cohort positions**: See what the best traders are holding in real-time
 - **Real-time trade feed**: Every trade by any wallet or cohort, queryable by time window
 - **Liquidation heatmaps**: Cluster analysis across price levels for any coin

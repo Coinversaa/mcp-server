@@ -436,17 +436,33 @@ Tools taking `address` expect a full Ethereum address: `0x` plus 40 hex characte
 
 ### Pulse — Cohort Intelligence
 
-PnL tiers:
+PnL tiers (by profitability, best to worst):
 
-```text
-money_printer, smart_money, grinder, humble_earner, exit_liquidity, semi_rekt, full_rekt, giga_rekt
-```
+| Display name | Slug | Legacy slug (still accepted) |
+|--------------|------|------------------------------|
+| Apex | `apex` | `money_printer` |
+| Sharps | `sharps` | `smart_money` |
+| Grinders | `grinders` | `grinder` |
+| Scrapers | `scrapers` | `humble_earner` |
+| The Crowd | `crowd` | `exit_liquidity` |
+| Bleeders | `bleeders` | `semi_rekt` |
+| Trapped | `trapped` | `full_rekt` |
+| Blown Out | `blown_out` | `giga_rekt` |
 
-Size tiers:
+Size tiers (by volume, largest to smallest):
 
-```text
-leviathan, tidal_whale, whale, small_whale, apex_predator, dolphin, fish, shrimp
-```
+| Display name | Slug | Legacy slug (still accepted) |
+|--------------|------|------------------------------|
+| Heavyweights | `heavyweights` | `leviathan` |
+| Cruiserweights | `cruiserweights` | `tidal_whale` |
+| Middleweights | `middleweights` | `whale` |
+| Welterweights | `welterweights` | `small_whale` |
+| Lightweights | `lightweights` | `apex_predator` |
+| Featherweights | `featherweights` | `dolphin` |
+| Flyweights | `flyweights` | `fish` |
+| Strawweights | `strawweights` | `shrimp` |
+
+Tool inputs accept both slug vocabularies (new slugs are normalized before the API call). API responses currently still emit legacy slugs.
 
 Tools:
 
@@ -491,7 +507,7 @@ Tools:
 ## Example Prompts
 
 - "What are the top 5 traders on Hyperliquid by PnL?"
-- "Show me what the money_printer tier is holding right now."
+- "Show me what the apex tier is holding right now."
 - "What are the biggest trades in the last 10 minutes?"
 - "Find underrated traders with 70%+ win rate."
 - "Where are the BTC liquidation clusters?"
