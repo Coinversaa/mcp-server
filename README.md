@@ -291,7 +291,7 @@ The 3 asset tools call `/api/public/v1/assets*` endpoints on the production Coin
 
 ## Available Tools (82)
 
-All 91 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
+All 99 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
 
 ### Risk Tools Freshness
 

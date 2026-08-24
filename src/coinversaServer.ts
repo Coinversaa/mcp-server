@@ -109,6 +109,13 @@ const sinceSchema = z
   .regex(/^\d+[mhd]$/, "Must be a number followed by m (minutes), h (hours), or d (days). e.g. '10m', '1h', '7d'")
   .describe("Time window: e.g. '10m' (minutes), '1h' (hours), '1d' (days)");
 
+const builderPeriodSchema = z.enum(["day", "week", "month"]);
+
+const builderAddressSchema = z
+  .string()
+  .regex(/^0x[a-fA-F0-9]{40}$/, "Must be a valid Ethereum address (0x followed by 40 hex characters)")
+  .describe("Builder address (0x...) — the fee-receiving address a frontend/bot/dex registers on Hyperliquid");
+
 /**
  * Normalize a coin/symbol string: uppercase the coin name while preserving
  * lowercase builder dex prefix (e.g. "xyz:silver" → "xyz:SILVER", "btc" → "BTC").
@@ -353,6 +360,18 @@ EXCHANGE AGGREGATES (v0.9):
   Builder dexes (HIP-3) are ~43% of Hyperliquid volume; most trackers'
   headline numbers count native only, so cite the by-dex split when comparing.
 
+BUILDER ANALYTICS (new in 0.11):
+- builder_leaderboard → builders ranked by exact ledger revenue [Starter]
+- builder_profile     → one builder: revenue, daily series, top coins [Starter]
+- builder_traders     → wallets trading via a builder, with cohort tiers [Pro]
+- builder_fills       → individual attributed fills through a builder [Pro]
+- builder_cohorts     → a builder's user base split by behavioral tier [Pro]
+- builder_retention   → monthly new-user retention triangle [Pro]
+- builder_overlap     → which other builders share this one's users [Pro]
+- trader_builders     → the builders one wallet trades through [Starter]
+Tiers on builder_traders/builder_cohorts are ALL-TIME exchange-wide labels
+(legacy slugs), not the 30d-rolling tiers the pulse_cohort_recent_* tools use.
+
 PLANS & LIMITS:
 - pulse_my_plan shows the caller's tier, limits, and every tier's limits.
   Call it when a request is rejected for tier or rate-limit reasons, then
@@ -366,7 +385,7 @@ TIPS:
 
 const server = new McpServer({
   name: "coinversaa-pulse",
-  version: "0.9.0",
+  version: "0.11.0",
 }, {
   instructions: SERVER_INSTRUCTIONS,
 });
@@ -1972,6 +1991,143 @@ if (shouldRegister("pulse_pnl_leaders")) server.registerTool(
     },
   },
   async ({ useToonFormat, limit }) => toolResult(await callAPI(useToonFormat, "/exchange/pnl-leaders", { limit: String(limit) }))
+);
+
+
+// ══════════════════════════════════════════════════════════
+// BUILDER ANALYTICS (new in 0.11) — 8 tools
+// ══════════════════════════════════════════════════════════
+
+// ─── Builder Revenue Leaderboard [STARTER] ────────────────
+if (shouldRegister("builder_leaderboard")) server.registerTool(
+  "builder_leaderboard",
+  {
+    description: "Builders (HIP-3 dexes, frontends, bots) ranked by exact revenue from Hyperliquid's on-chain cumulative builder-fee ledger over the requested period. Each row carries join-attributed fill volume, distinct users, and fill counts — plus the same metrics for the immediately preceding window for deltas — the builder's most common requested fee rate over the last 7d of orders (feeTenthsBp, tenths of a basis point), and builderName from a curated registry (omitted when unknown). Attributed metrics slightly undercount versus ledger revenue because trigger-order fills (stop/TP) are not yet attributed — see the response's dataNotes; the 'verified' stamp gives the ledger block this data was reconciled against. Use for 'which builders earn the most?' or 'is builder X growing?'. Requires Starter tier or higher.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      period: builderPeriodSchema.default("week").describe("Ranking window: day, week, or month. Prev-window deltas cover the same-length window immediately before."),
+      limit: z.number().int().min(1).max(100).default(50).describe("Rows to return (max 100)."),
+      offset: z.number().int().min(0).max(1000).default(0).describe("Pagination offset (window capped at 1000)."),
+    },
+  },
+  async ({ useToonFormat, period, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, "/builders/leaderboard", { period, limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Builder Profile [STARTER] ────────────────────────────
+if (shouldRegister("builder_profile")) server.registerTool(
+  "builder_profile",
+  {
+    description: "Single-builder overview for a 0x-hex builder address: exact revenue from Hyperliquid's on-chain builder-fee ledger over the period (day/week/month), first/last fee accrual timestamps, distinct fee tokens, most common requested fee rate over the last 7d of orders (feeTenthsBp, tenths of a basis point), a daily attributed series (fees/volume/users/fills) with the biggest day highlighted, top coins by attributed volume, and how many of the period's attributed wallets are all-time profitable. Attributed metrics slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes); builderName comes from a curated registry, omitted when unknown. Returns 404 for addresses with no revenue in the fee ledger. Use for 'how is builder X doing?' or 'what do people trade on frontend Y?'. Requires Starter tier or higher.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+      period: builderPeriodSchema.default("month").describe("Aggregation window: day, week, or month."),
+      topCoins: z.number().int().min(1).max(50).default(10).describe("How many top coins (by attributed volume) to return (max 50)."),
+    },
+  },
+  async ({ useToonFormat, builder, period, topCoins }) =>
+    toolResult(await callAPI(useToonFormat, `/builders/${builder}/profile`, { period, topCoins: String(topCoins) }))
+);
+
+// ─── Builder's Attributed Traders [PRO] ───────────────────
+if (shouldRegister("builder_traders")) server.registerTool(
+  "builder_traders",
+  {
+    description: "Wallets that traded via a builder (0x-hex address) in the window, sortable by builder fees paid, volume, or realized PnL. Each row: wallet, realized PnL on its attributed fills, builderFeesUsd, volumeUsd, fills, latest equity (0 if untracked), and the wallet's ALL-TIME exchange-wide cohort tiers (pnlTier/sizeTier, emitted as legacy slugs like smart_money/whale; null if untracked) — lifetime labels, unlike the 30d-rolling tiers the pulse cohort tools classify by, so memberships can differ. Attributed fills slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes). Use for 'who are builder X's biggest fee payers?' or 'are smart-money wallets using this frontend?'. Requires Pro tier.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+      period: builderPeriodSchema.default("week").describe("Attribution window: day, week, or month."),
+      sort: z.enum(["builderFee", "volume", "pnl"]).default("builderFee").describe("Ranking: builderFee (fees paid to the builder), volume, or pnl."),
+      limit: z.number().int().min(1).max(500).default(50).describe("Rows to return (max 500)."),
+      offset: z.number().int().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, builder, period, sort, limit, offset }) =>
+    toolResult(await callAPI(useToonFormat, `/builders/${builder}/traders`, { period, sort, limit: String(limit), offset: String(offset) }))
+);
+
+// ─── Builder Attributed Fills [PRO] ───────────────────────
+if (shouldRegister("builder_fills")) server.registerTool(
+  "builder_fills",
+  {
+    description: "Individual fills attributed to a builder (0x-hex address) within a lookback window (since, e.g. '6h' or '7d', clamped to 90d), optionally filtered to one exact coin (BTC, xyz:GOLD, @123 spot, #10010 HIP-4 outcome) or one wallet. Each fill: time, wallet, coin, marketType (perp|spot|hip4), side (BUY|SELL), price, size, USD volume, realized PnL, builderFeeUsd, tid, and the order id it attributes to (null if untracked). Trigger-order (stop/TP) fills are not yet attributed, so this feed slightly undercounts versus ledger revenue — see the response's dataNotes. Use for 'show me the flow going through frontend X right now' or auditing one wallet's activity via a builder. Requires Pro tier.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+      since: sinceSchema.default("24h").describe("Lookback window like '30m', '6h', '7d' (clamped to 90d)."),
+      coin: z.string().optional().describe("Optional exact coin filter: BTC, xyz:GOLD, @123 (spot), #10010 (HIP-4)."),
+      address: ethAddressSchema.optional().describe("Optional wallet filter (0x-hex address)."),
+      limit: z.number().int().min(1).max(500).default(50).describe("Rows to return (max 500)."),
+      offset: z.number().int().min(0).default(0).describe("Pagination offset."),
+    },
+  },
+  async ({ useToonFormat, builder, since, coin, address, limit, offset }) => {
+    const params: Record<string, string> = { since, limit: String(limit), offset: String(offset) };
+    if (coin) params.coin = normalizeCoin(coin);
+    if (address) params.address = address;
+    return toolResult(await callAPI(useToonFormat, `/builders/${builder}/fills`, params));
+  }
+);
+
+// ─── Builder User Cohort Composition [PRO] ────────────────
+if (shouldRegister("builder_cohorts")) server.registerTool(
+  "builder_cohorts",
+  {
+    description: "Cohort composition of a builder's attributed users over the period (day/week/month): split by all-time exchange-wide profitability tier (pnlTiers) and size tier (sizeTiers), largest cohort first, each with users, share of totalUsers, builder fees paid, attributed volume, realized PnL, and fills. Tiers are LIFETIME labels emitted as legacy slugs (money_printer..giga_rekt / leviathan..shrimp) — not the 30d-rolling tiers the pulse cohort tools use — and wallets missing from the rollup appear under 'untracked' so per-tier user counts always sum to totalUsers. Attribution slightly undercounts versus ledger revenue (trigger-order fills — see the response's dataNotes). Use for 'is builder X's user base smart money or exit liquidity?' or 'do whales or shrimp pay most of its fees?'. Requires Pro tier.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+      period: builderPeriodSchema.default("week").describe("Attribution window: day, week, or month."),
+    },
+  },
+  async ({ useToonFormat, builder, period }) =>
+    toolResult(await callAPI(useToonFormat, `/builders/${builder}/cohorts`, { period }))
+);
+
+// ─── Builder Monthly Retention Cohorts [PRO] ──────────────
+if (shouldRegister("builder_retention")) server.registerTool(
+  "builder_retention",
+  {
+    description: "Monthly retention matrix for a builder's users (takes only the 0x-hex builder address — no other parameters): wallets are cohorted by the calendar month (YYYY-MM, UTC) of their first builder-fee order via this builder, and each cohort's activeWallets[k] counts wallets still active k months later, where 'active' = placed at least one builder-fee order that month (index 0 = the cohort month itself = newWallets). Covers the last 12 calendar months, oldest cohort first. Measured on the ORDERS plane — the order need not fill — so counts can exceed the attributed-fill user counts on builder_cohorts/builder_overlap; see the response's dataNotes for the attribution caveat. Use for 'does builder X retain users month over month, or churn them?'. Requires Pro tier.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+    },
+  },
+  async ({ useToonFormat, builder }) =>
+    toolResult(await callAPI(useToonFormat, `/builders/${builder}/retention`))
+);
+
+// ─── Builder Audience Overlap [PRO] ───────────────────────
+if (shouldRegister("builder_overlap")) server.registerTool(
+  "builder_overlap",
+  {
+    description: "The top 10 OTHER builders this builder's active users also traded through in the period (day/week/month), ranked by shared users — i.e. which other frontends/bots/dexes this builder's audience also uses. Returns activeUsers (the share denominator: distinct wallets with attributed fills via this builder) and per row: the other builder's 0x address, curated builderName (omitted when unknown), sharedUsers, share of this builder's active users, and feesUsd those shared users paid to the OTHER builder in the period. Based on attributed fills, which slightly undercount (trigger-order fills — see the response's dataNotes). Use for 'who is builder X's closest competitor?' or 'where else does its audience trade?'. Requires Pro tier.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+      period: builderPeriodSchema.default("week").describe("Attribution window: day, week, or month."),
+    },
+  },
+  async ({ useToonFormat, builder, period }) =>
+    toolResult(await callAPI(useToonFormat, `/builders/${builder}/overlap`, { period }))
+);
+
+// ─── Builders a Wallet Trades Through [STARTER] ───────────
+if (shouldRegister("trader_builders")) server.registerTool(
+  "trader_builders",
+  {
+    description: "Every builder (frontend, bot, HIP-3 dex) a wallet (0x-hex address) had attributed fills through within a lookback window (since, default '30d', clamped to 90d), ordered by builder fees paid descending. Each row: builder address, curated builderName (omitted when unknown), fills, builderFeesUsd, volumeUsd, and first/last attributed-fill timestamps within the window. Attribution slightly undercounts (trigger-order stop/TP fills not yet attributed — see the response's dataNotes). The inverse of builder_traders: wallet → builders instead of builder → wallets. Use for 'which apps does this trader use?' or 'how much has wallet X paid frontend Y in fees?'. Requires Starter tier or higher.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      address: ethAddressSchema,
+      since: sinceSchema.default("30d").describe("Lookback window like '30m', '6h', '30d' (clamped to 90d)."),
+    },
+  },
+  async ({ useToonFormat, address, since }) =>
+    toolResult(await callAPI(useToonFormat, `/trader/${address}/builders`, { since }))
 );
 
 return server;
