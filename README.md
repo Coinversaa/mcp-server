@@ -6,6 +6,36 @@ Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, i
 
 **Now with HIP-4 outcome contracts and builder dex support** — inspect prediction-market style outcome contracts, settlements, commodities (gold, silver, oil), stocks (TSLA, AAPL), and perps across 8 dexes and 369+ markets.
 
+## What's new in 0.11.0
+
+**Builder analytics — 8 new tools (91 → 99).** The Hyperliquid builder-code
+economy (the fees frontends, wallet apps, bots, and builder dexes earn on
+routed order flow) is now a first-class tool family:
+
+- `builder_leaderboard` — builders ranked by exact on-chain ledger revenue, with attributed volume/users and prev-window deltas *(Starter)*
+- `builder_profile` — one builder: revenue, daily series, top coins, profitable-user share *(Starter)*
+- `builder_traders` — wallets trading via a builder, with exchange-wide cohort tiers *(Pro)*
+- `builder_fills` — individual attributed fills through a builder, perp/spot/HIP-4 *(Pro)*
+- `builder_cohorts` — a builder's user base split by behavioral tier *(Pro)*
+- `builder_retention` — monthly new-user retention triangle *(Pro)*
+- `builder_overlap` — which other builders share this one's users *(Pro)*
+- `trader_builders` — every builder one wallet trades through, by fees paid *(Starter)*
+
+Revenue is computed from Hyperliquid's own cumulative builder-fee ledger
+(reconciled on-chain); fill-level detail comes from order→fill attribution
+with honest coverage caveats in every response (`dataNotes`). Ask your agent
+*"which frontends do MetaMask's traders also use?"* — no other data source
+can answer that.
+
+## What's new in 0.10.0
+
+**Dual-vocabulary cohort tiers.** New canonical tier slugs accepted everywhere
+a tier is an input — PnL tiers (`apex`, `sharps`, `grinders`, `scrapers`,
+`crowd`, `bleeders`, `trapped`, `blown_out`) and weight-class size tiers
+(`heavyweights` … `strawweights`). Legacy slugs (`money_printer`,
+`smart_money`, …) remain valid indefinitely; responses are unchanged. No
+breaking changes.
+
 ## What's new in 0.9.0
 
 **Entity resolution, tier-aware sessions, and chain-verified answers.**
@@ -108,7 +138,7 @@ You can connect in two ways:
 | Method | Endpoint / command | Best for |
 |--------|--------------------|----------|
 | Hosted Remote MCP | `https://mcp.coinversa.ai/mcp` | Remote MCP clients and custom connectors that support Streamable HTTP |
-| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.9.0` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
+| Local stdio MCP | `npx -y @coinversaa/mcp-server@latest` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
 
 Remote MCP clients should send the Coinversa key as either `Authorization: Bearer cvsa_...` or `X-API-Key: cvsa_...`.
 
@@ -119,7 +149,7 @@ Local MCP clients must pass `COINVERSAA_API_KEY`:
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.9.0"],
+      "args": ["-y", "@coinversaa/mcp-server@latest"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -137,7 +167,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac) or 
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.9.0"],
+      "args": ["-y", "@coinversaa/mcp-server@latest"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -155,7 +185,7 @@ Add to `.cursor/mcp.json` in your project root:
   "mcpServers": {
     "coinversaa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.9.0"],
+      "args": ["-y", "@coinversaa/mcp-server@latest"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -167,7 +197,7 @@ Add to `.cursor/mcp.json` in your project root:
 #### Claude Code
 
 ```bash
-claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@0.9.0
+claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@latest
 ```
 
 Set the env var in your shell:
