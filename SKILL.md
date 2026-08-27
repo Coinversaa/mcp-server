@@ -1,7 +1,7 @@
 ---
 name: coinversaa-pulse
-description: "Read-only crypto intelligence for AI agents. 82 API-key-authenticated tools for Hyperliquid trader analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, behavioral cohorts, HIP-4 outcome contracts, outcome/perp position context, syncer-backed risk data, live market data, builder dex markets, commodities, stocks, indices, cross-market asset taxonomy, liquidation heatmaps, official per-dex OI, and whale tracking across the full Hyperliquid wallet universe. This skill does not trade, sign transactions, move funds, request private keys, custody assets, or require wallet approvals. Call pulse_global_stats for live coverage totals."
-version: 0.8.0
+description: "Read-only crypto intelligence for AI agents. 103 API-key-authenticated tools for Hyperliquid trader analytics, builder-fee revenue analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, behavioral cohorts, HIP-4 outcome contracts, outcome/perp position context, syncer-backed risk data, live market data, builder dex markets, commodities, stocks, indices, cross-market asset taxonomy, liquidation heatmaps, official per-dex OI, and whale tracking across the full Hyperliquid wallet universe. This skill does not trade, sign transactions, move funds, request private keys, custody assets, or require wallet approvals. Call pulse_global_stats for live coverage totals."
+version: 0.11.1
 author: Coinversa <chat@coinversaa.ai>
 homepage: https://coinversa.ai
 repository: https://github.com/coinversaa/mcp-server
@@ -315,13 +315,36 @@ Use HIP-4 tools when users ask about outcomes, prediction markets, questions, se
 
 ---
 
+## Builder Analytics Tools
+
+Builders (frontends, bots, HIP-3 dexes) charge per-order builder fees on Hyperliquid. Revenue figures are exact, from Hyperliquid's on-chain cumulative builder-fee ledger; volume/user/fill detail comes from order-fill attribution and slightly undercounts because trigger-order (stop/TP) fills are not yet attributed — each response carries a `dataNotes` explanation and a `verified` ledger-block stamp. `builderName` comes from a curated registry and is omitted when unknown. Tier labels on `builder_traders` / `builder_cohorts` are ALL-TIME exchange-wide legacy slugs, not the 30d-rolling pulse cohort tiers.
+
+| Tool | Tier | Inputs | Backend route | What it returns / when to use |
+|------|------|--------|---------------|-------------------------------|
+| `builder_leaderboard` | Starter+ | `period` day/week/month default week, `limit` 1-100 default 50, `offset` 0-1000 default 0 | `GET /builders/leaderboard` | Builders ranked by exact ledger revenue, with attributed volume/users/fills, prev-window deltas, and the most common requested fee rate (`feeTenthsBp`). "Which builders earn the most?" |
+| `builder_profile` | Starter+ | `builder` 0x-hex, `period` default month, `topCoins` 1-50 default 10 | `GET /builders/{builder}/profile` | One builder: ledger revenue, first/last fee accrual, fee tokens, daily attributed series with biggest day, top coins, total vs all-time-profitable users. 404 if the address has no ledger revenue. |
+| `trader_builders` | Starter+ | `address` 0x-hex, `since` default 30d (clamped 90d) | `GET /trader/{address}/builders` | Every builder a wallet trades through, ordered by fees paid, with fills, volume, and first/last seen in the window. |
+| `builder_traders` | Pro+ | `builder` 0x-hex, `period` default week, `sort` builderFee/volume/pnl, `limit` 1-500 default 50, `offset` | `GET /builders/{builder}/traders` | The builder's attributed wallets with PnL, fees, volume, equity, and all-time `pnlTier`/`sizeTier` labels (null if untracked). |
+| `builder_fills` | Pro+ | `builder` 0x-hex, `since` default 24h (clamped 90d), optional `coin` and `address` filters, `limit` 1-500, `offset` | `GET /builders/{builder}/fills` | Individual attributed fills: time, wallet, coin, marketType (perp/spot/hip4), side, price, size, volume, PnL, builder fee, oid/tid. |
+| `builder_cohorts` | Pro+ | `builder` 0x-hex, `period` default week | `GET /builders/{builder}/cohorts` | User-base composition by all-time PnL and size tier (largest first, incl. `untracked`), each with users, share, fees, volume, PnL, fills. |
+| `builder_retention` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/retention` | Monthly retention triangle, last 12 calendar months, oldest first: `newWallets` plus `activeWallets[]` per subsequent month (orders plane — counts can exceed attributed-fill user counts). |
+| `builder_overlap` | Pro+ | `builder` 0x-hex, `period` default week | `GET /builders/{builder}/overlap` | Top 10 other builders sharing this builder's active users: sharedUsers, share, and fees those users paid to the other builder. |
+| `builder_journey` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/journey` | Revenue ramp of the trailing-year acquisition cohort (>= 3 lifetime attributed fills): avg/median lifetime fees per wallet, whale `concentration`, days to peak / 50% / 75% of lifetime revenue, and a peak-day bucket split. |
+| `builder_lifecycle` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/lifecycle` | One snapshot of the LIFETIME user base (orders plane) split into five mutually exclusive statuses — active, cooling, switched, dormant, movedOn — plus trueRetention, churn, competitiveLoss, and the fees switched wallets paid rivals in 30d. |
+| `builder_heatmap` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/heatmap` | Fixed trailing 84 days as a zero-filled 7x24 UTC weekday-by-hour grid (Sunday first), each cell carrying volumeUsd, feesUsd, and fills totalled over the window. |
+| `builder_orders` | Pro+ | `builder` 0x-hex, `period` default week | `GET /builders/{builder}/orders` | Placement-plane intent: totalIntents, action mix, time-in-force mix, reduceOnlyShare, a stop/TP trigger breakdown, and fillConversion (trigger history begins 2026-03-24). |
+
+---
+
 ## Tools
 
-82 total read-only analytics tools:
+103 total read-only analytics tools:
 
 - 43 existing Hyperliquid market, trader, cohort, risk, cross-market asset, and live analytics tools
 - 12 HIP-4 outcome-contract tools
 - 27 position-lifecycle, execution-quality, trader-archetype, market-structure, comparison, and recent-cohort tools
+- 9 entity-resolution, exchange-aggregate, PnL-leader, and plan-introspection tools
+- 12 builder-analytics tools (ledger-exact revenue leaderboard/profile, traders, fills, cohorts, retention, overlap, user lifecycle, journey economics, activity heatmap, order intent, and per-wallet builder lookup)
 - All tools require a Coinversa API key
 - The Coinversa API enforces tier-specific access
 
@@ -501,6 +524,23 @@ Tools:
 - `live_official_oi`
 - `live_cohort_bias_history`
 - `pulse_recent_closed_positions`
+
+### Builder Analytics
+
+Builder addresses are `0x` plus 40 hex characters, like wallets. See the Builder Analytics Tools table above for tiers and inputs.
+
+- `builder_leaderboard` — Builders ranked by exact ledger revenue with attributed metrics and deltas.
+- `builder_profile` — One builder's revenue, daily series, top coins, and user profitability.
+- `builder_traders` — A builder's attributed wallets with all-time cohort tiers.
+- `builder_fills` — Individual attributed fills through a builder.
+- `builder_cohorts` — A builder's user base split by behavioral tier.
+- `builder_retention` — Monthly new-user retention triangle.
+- `builder_overlap` — Which other builders share this builder's users.
+- `trader_builders` — Every builder one wallet trades through.
+- `builder_journey` — How fast and how unevenly a builder monetizes a new user.
+- `builder_lifecycle` — Where every wallet that ever traded via a builder stands today.
+- `builder_heatmap` — 7x24 UTC weekday-by-hour activity grid over the trailing 12 weeks.
+- `builder_orders` — What a builder's users intend at placement time, before anything fills.
 
 ---
 
