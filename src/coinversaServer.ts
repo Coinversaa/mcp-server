@@ -17,7 +17,7 @@ export interface CoinversaServerOptions {
   apiUrl?: string;
 }
 
-export const COINVERSA_TOTAL_TOOL_COUNT = 91;
+export const COINVERSA_TOTAL_TOOL_COUNT = 103;
 export const DEFAULT_COINVERSA_API_URL = "https://api.coinversa.ai";
 
 // ─── Cohort Tier Vocabulary ──────────────────────────────
@@ -74,6 +74,15 @@ export const TIER_SLUGS = [
 /** Zod enum accepting both tier vocabularies — exported for tests. */
 export const tierEnum = z.enum(TIER_SLUGS);
 
+// ─── Shared Builder Schemas ──────────────────────────────
+// Module scope (not inside createCoinversaServer) so the tests can import them.
+export const builderPeriodSchema = z.enum(["day", "week", "month"]);
+
+export const builderAddressSchema = z
+  .string()
+  .regex(/^0x[a-fA-F0-9]{40}$/, "Must be a valid Ethereum address (0x followed by 40 hex characters)")
+  .describe("Builder address (0x...) — the fee-receiving address a frontend/bot/dex registers on Hyperliquid");
+
 export function createCoinversaServer(options: CoinversaServerOptions = {}) {
 const apiKey = options.apiKey;
 // Defaults to production. Override apiUrl / COINVERSAA_API_URL only if you
@@ -108,13 +117,6 @@ const sinceSchema = z
   .string()
   .regex(/^\d+[mhd]$/, "Must be a number followed by m (minutes), h (hours), or d (days). e.g. '10m', '1h', '7d'")
   .describe("Time window: e.g. '10m' (minutes), '1h' (hours), '1d' (days)");
-
-const builderPeriodSchema = z.enum(["day", "week", "month"]);
-
-const builderAddressSchema = z
-  .string()
-  .regex(/^0x[a-fA-F0-9]{40}$/, "Must be a valid Ethereum address (0x followed by 40 hex characters)")
-  .describe("Builder address (0x...) — the fee-receiving address a frontend/bot/dex registers on Hyperliquid");
 
 /**
  * Normalize a coin/symbol string: uppercase the coin name while preserving
@@ -360,7 +362,7 @@ EXCHANGE AGGREGATES (v0.9):
   Builder dexes (HIP-3) are ~43% of Hyperliquid volume; most trackers'
   headline numbers count native only, so cite the by-dex split when comparing.
 
-BUILDER ANALYTICS (new in 0.11):
+BUILDER ANALYTICS (new in 0.11, extended in 0.11.1):
 - builder_leaderboard → builders ranked by exact ledger revenue [Starter]
 - builder_profile     → one builder: revenue, daily series, top coins [Starter]
 - builder_traders     → wallets trading via a builder, with cohort tiers [Pro]
@@ -368,6 +370,10 @@ BUILDER ANALYTICS (new in 0.11):
 - builder_cohorts     → a builder's user base split by behavioral tier [Pro]
 - builder_retention   → monthly new-user retention triangle [Pro]
 - builder_overlap     → which other builders share this one's users [Pro]
+- builder_journey     → how fast a builder monetizes new-user cohorts [Pro]
+- builder_lifecycle   → active/cooling/switched/dormant/movedOn user split [Pro]
+- builder_heatmap     → 7x24 UTC weekday-by-hour activity grid, 12 weeks [Pro]
+- builder_orders      → order intent: action/TIF mix, stops, fill rate [Pro]
 - trader_builders     → the builders one wallet trades through [Starter]
 Tiers on builder_traders/builder_cohorts are ALL-TIME exchange-wide labels
 (legacy slugs), not the 30d-rolling tiers the pulse_cohort_recent_* tools use.
@@ -385,7 +391,7 @@ TIPS:
 
 const server = new McpServer({
   name: "coinversaa-pulse",
-  version: "0.11.0",
+  version: "0.11.1",
 }, {
   instructions: SERVER_INSTRUCTIONS,
 });
@@ -1995,7 +2001,7 @@ if (shouldRegister("pulse_pnl_leaders")) server.registerTool(
 
 
 // ══════════════════════════════════════════════════════════
-// BUILDER ANALYTICS (new in 0.11) — 8 tools
+// BUILDER ANALYTICS (new in 0.11; +4 in 0.11.1) — 12 tools
 // ══════════════════════════════════════════════════════════
 
 // ─── Builder Revenue Leaderboard [STARTER] ────────────────
@@ -2128,6 +2134,63 @@ if (shouldRegister("trader_builders")) server.registerTool(
   },
   async ({ useToonFormat, address, since }) =>
     toolResult(await callAPI(useToonFormat, `/trader/${address}/builders`, { since }))
+);
+
+// ─── Builder User Journey Economics [PRO] ─────────────────
+if (shouldRegister("builder_journey")) server.registerTool(
+  "builder_journey",
+  {
+    description: "How fast and how unevenly a builder monetizes the wallets it acquires (takes only the 0x-hex builder address — no other parameters): users and minFills, avgRevenueUsd and medianRevenueUsd of lifetime attributed builder fees per qualifying wallet, concentration (avg/median — 1 = evenly spread, higher = whale-skewed, 0 when the median is 0), daysToPeak, daysToHalfRevenue and daysToThreeQuartersRevenue as {avgDays, medianDays} measured from each wallet's first attributed fill to its single highest-revenue day and to 50% and 75% of its lifetime fees, and peakDayDistribution bucketing those wallets into under7d, from7To30d and over30d. NOT the lifetime user base builder_lifecycle covers: the universe is the TRAILING-YEAR acquisition cohort — wallets whose first builder-fee order via this builder fell within the last 365 days, with at least minFills (fixed at 3) lifetime attributed fills — computed per wallet then aggregated, so young cohorts' truncated series bias the day counts low; see the response's dataNotes. Use for 'how fast and how unevenly does builder X monetize a new user?'. Requires Pro tier.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+    },
+  },
+  async ({ useToonFormat, builder }) =>
+    toolResult(await callAPI(useToonFormat, `/builders/${builder}/journey`))
+);
+
+// ─── Builder User Lifecycle [PRO] ─────────────────────────
+if (shouldRegister("builder_lifecycle")) server.registerTool(
+  "builder_lifecycle",
+  {
+    description: "Where every wallet that ever traded via this builder stands today (takes only the 0x-hex builder address — no other parameters): totalUsers split into five MUTUALLY EXCLUSIVE statuses that sum back to it, each {users, share} — active (attributed fill via THIS builder within 7d), cooling (within 30d but not 7d), switched (no fill here in 30d but at least one via a DIFFERENT builder in that window, detectable only with all-builder attribution), dormant (no fill via any builder in 30d, last fill here within 90d) and movedOn (no fill anywhere in 30d and none here in 90d) — plus trueRetention ((active+cooling)/totalUsers), churn ((dormant+movedOn)/totalUsers) and competitiveLoss (switched/totalUsers), which sum to 1, and competitiveLossFeesUsd, the builder fees those switched wallets paid to OTHER builders in the last 30d. LIFETIME universe on the ORDERS plane — every wallet that ever placed a builder-fee order via this builder, including ones whose orders never filled (they land in movedOn, or in switched if they filled via a DIFFERENT builder in the last 30d) — with only the status test reading recent attributed fills, so this is one snapshot of the whole historical user base rather than builder_retention's per-cohort monthly grid; see the response's dataNotes. Use for 'how many of builder X's users are still active, and how many did a rival take?'. Requires Pro tier.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+    },
+  },
+  async ({ useToonFormat, builder }) =>
+    toolResult(await callAPI(useToonFormat, `/builders/${builder}/lifecycle`))
+);
+
+// ─── Builder Activity Heatmap [PRO] ───────────────────────
+if (shouldRegister("builder_heatmap")) server.registerTool(
+  "builder_heatmap",
+  {
+    description: "When a builder's attributed flow actually trades (takes only the 0x-hex builder address — no other parameters): a 7x24 weekday-by-hour grid as days[], always 7 entries Sunday first with weekday 0 = Sunday through 6 = Saturday, each carrying hours[], always 24 entries with hour 0 first, and every cell reporting hour, volumeUsd, feesUsd and fills totalled over the whole window; zero-activity cells are zero-valued, never omitted. No period parameter and no per-week averaging — windowDays is fixed at 84, the trailing 12 weeks, so every weekday is sampled exactly 12 times — and both weekday and hour are UTC, never local time. Attributed fills slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes). Use for 'what hours does builder X's volume peak, is it bot-like around the clock or human trading hours, and when is it safe to ship?'. Requires Pro tier.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+    },
+  },
+  async ({ useToonFormat, builder }) =>
+    toolResult(await callAPI(useToonFormat, `/builders/${builder}/heatmap`))
+);
+
+// ─── Builder Order Intent [PRO] ───────────────────────────
+if (shouldRegister("builder_orders")) server.registerTool(
+  "builder_orders",
+  {
+    description: "What this builder's users INTEND at placement time, before anything fills (0x-hex builder address plus a day/week/month period): totalIntents — non-trigger order intents plus still-PENDING stop/TP placements, the actions denominator — an actions[] mix of {actionType, orders, share}, largest first except the 'trigger' pseudo-type which is appended last, over 'order' (plain placements), 'batchModify' (modify intents on an existing order) and 'trigger' (pending stop/TP placements), a tifs[] time-in-force mix of {tif, orders, share} over non-trigger intents ('unknown' covers market orders and older rows), reduceOnlyShare, a trigger breakdown (total, takeProfit, stopLoss, triggerMarket, triggerLimit, positionTpsl, standaloneTpsl, resolved, pending) and fillConversion {orders, filledOrders, share} — the share of non-trigger intents whose own oid took at least one attributed fill. Measured on the PLACEMENT plane, not the fill plane behind builder_fills and builder_traders, so orders that never filled still count; trigger placement history begins 2026-03-24, and a resolved placement is excluded from totalIntents and the 'trigger' action because it already surfaces as a plain 'order' row, while the trigger breakdown covers both statuses — see the response's dataNotes. Use for 'do builder X's users place stops and take-profits, and how much of their order flow actually fills?'. Requires Pro tier.",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      builder: builderAddressSchema,
+      period: builderPeriodSchema.default("week").describe("Placement window: day, week, or month."),
+    },
+  },
+  async ({ useToonFormat, builder, period }) =>
+    toolResult(await callAPI(useToonFormat, `/builders/${builder}/orders`, { period }))
 );
 
 return server;

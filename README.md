@@ -319,9 +319,9 @@ Numbers are illustrative — call `pulse_cross_market_asset` with `canonical: "G
 
 The 3 asset tools call `/api/public/v1/assets*` endpoints on the production Coinversa backend (`https://api.coinversa.ai`). Self-hosted or forked setups need to run a backend that exposes these routes; see the Coinversa backend repo for the reference implementation.
 
-## Available Tools (82)
+## Available Tools (103)
 
-All 99 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
+All 103 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
 
 ### Risk Tools Freshness
 
@@ -466,6 +466,25 @@ Tool inputs accept both vocabularies (new slugs are normalized before the API ca
 | `pulse_cohort_history` | Historical performance trends for any cohort |
 | `pulse_cohort_bias_history` | Historical hourly bias snapshots for all cohorts |
 | `pulse_cohort_performance_daily` | Historical daily performance stats for all cohorts |
+
+### Builder Analytics — 0.11
+
+Builders (frontends, bots, HIP-3 dexes) charge per-order builder fees on Hyperliquid. Revenue figures are exact, from Hyperliquid's on-chain cumulative builder-fee ledger; volume/user/fill detail comes from order-fill attribution and slightly undercounts because trigger-order (stop/TP) fills are not yet attributed. Tier labels on `builder_traders` / `builder_cohorts` are ALL-TIME exchange-wide legacy slugs, not the 30d-rolling pulse cohort tiers.
+
+| Tool | Description |
+|------|-------------|
+| `builder_leaderboard` | Builders ranked by exact ledger revenue, with attributed volume/users/fills and prev-window deltas |
+| `builder_profile` | One builder: revenue, daily series with biggest day, top coins, total vs all-time-profitable users |
+| `trader_builders` | Every builder a wallet trades through, ordered by fees paid |
+| `builder_traders` | The builder's attributed wallets with PnL, fees, volume, equity, and all-time tier labels |
+| `builder_fills` | Individual attributed fills: time, wallet, coin, side, price, size, volume, PnL, builder fee |
+| `builder_cohorts` | User-base composition by all-time PnL and size tier |
+| `builder_retention` | Monthly new-user retention triangle, last 12 calendar months |
+| `builder_overlap` | Which other builders share this one's active users, and the fees those users pay them |
+| `builder_journey` | How fast and how unevenly a builder monetizes a newly acquired wallet |
+| `builder_lifecycle` | Where every past user stands today: active, cooling, switched, dormant, or moved on |
+| `builder_heatmap` | 7x24 UTC weekday-by-hour activity grid over a fixed trailing 84 days |
+| `builder_orders` | Order intent at placement: action/TIF mix, stops and take-profits, and fill conversion |
 
 ### Market — Live Data
 
