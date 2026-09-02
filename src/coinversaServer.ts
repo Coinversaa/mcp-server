@@ -8,6 +8,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { encode as toonEncode } from '@toon-format/toon'
+import { createRequire } from "node:module";
 
 import { z } from "zod";
 
@@ -74,6 +75,34 @@ export const TIER_SLUGS = [
 /** Zod enum accepting both tier vocabularies — exported for tests. */
 export const tierEnum = z.enum(TIER_SLUGS);
 
+// The API records the User-Agent of every call. Without one of our own we
+// inherit the runtime default — "node" or "Bun/1.3.13" — which is
+// indistinguishable from any other script, so MCP traffic cannot be told apart
+// from raw API use and version adoption is invisible.
+//
+// npm ships package.json in the tarball even with `files: ["build"]`, so
+// `../package.json` resolves from build/*.js at runtime. createRequire keeps it
+// out of the TS module graph: a static JSON import does not compile under
+// `module: Node16` without resolveJsonModule, and would land the emitted file
+// in build/src/ by pulling package.json into rootDir.
+const PKG_VERSION: string = (() => {
+  try {
+    const req = createRequire(import.meta.url);
+    return (req("../package.json") as { version?: string }).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
+
+// clientInfo is supplied by the MCP host, so it is untrusted input on its way
+// into an outbound header. Anything outside the safe token set becomes a dash
+// and the result is capped: a stray newline would otherwise make every tool
+// call throw at Headers construction, which fails the whole server rather than
+// just the label.
+function sanitizeUaToken(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+}
+
 export function createCoinversaServer(options: CoinversaServerOptions = {}) {
 const apiKey = options.apiKey;
 // Defaults to production. Override apiUrl / COINVERSAA_API_URL only if you
@@ -83,6 +112,22 @@ const BASE = `${API_URL}/api/public/v1`;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1_000;
+
+// Built per request, not once: clientInfo only exists after the host's
+// `initialize` handshake, which always precedes a tool call. Naming the host
+// is the point — "which of these callers is Claude" is not answerable today.
+function buildUserAgent(): string {
+  const base = `coinversa-mcp/${PKG_VERSION}`;
+  try {
+    const client = server.server.getClientVersion();
+    const name = client?.name ? sanitizeUaToken(client.name) : "";
+    if (!name) return base;
+    const version = client?.version ? sanitizeUaToken(client.version) : "";
+    return `${base} (${version ? `${name}/${version}` : name})`;
+  } catch {
+    return base;
+  }
+}
 
 function shouldRegister(_toolName: string): boolean {
   return true;
@@ -151,7 +196,7 @@ async function callAPI(useToon: boolean, path: string, params?: Record<string, s
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { "User-Agent": buildUserAgent() };
       if (apiKey) headers["X-API-Key"] = apiKey;
 
       const response = await fetch(url.toString(), {
