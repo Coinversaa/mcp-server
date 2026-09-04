@@ -10,7 +10,7 @@ import { createCoinversaServer, COINVERSA_TOTAL_TOOL_COUNT } from "./coinversaSe
 async function main() {
   const apiKey = process.env.COINVERSAA_API_KEY?.trim();
   if (!apiKey) {
-    console.error("Fatal error: COINVERSAA_API_KEY is required. Get a key at https://coinversa.ai/developers");
+    console.error("Fatal error: COINVERSAA_API_KEY is required. Get a key at https://developers.coinversa.ai/keys");
     process.exit(1);
   }
 

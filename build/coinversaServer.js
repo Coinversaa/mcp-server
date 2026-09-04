@@ -7,7 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { encode as toonEncode } from '@toon-format/toon';
 import { z } from "zod";
-export const COINVERSA_TOTAL_TOOL_COUNT = 91;
+export const COINVERSA_TOTAL_TOOL_COUNT = 103;
 export const DEFAULT_COINVERSA_API_URL = "https://api.coinversa.ai";
 // ─── Cohort Tier Vocabulary ──────────────────────────────
 // New tier slugs are the primary vocabulary; legacy slugs remain accepted.
@@ -68,6 +68,11 @@ export function createCoinversaServer(options = {}) {
     const REQUEST_TIMEOUT_MS = 30_000;
     const MAX_RETRIES = 2;
     const RETRY_DELAY_MS = 1_000;
+    // builder_journey / builder_heatmap: the API computes these per builder on
+    // first request (65-90s measured on production) and caches the result, so
+    // those calls get a longer budget and no retry (a retry would just queue
+    // behind the computation already in flight).
+    const SLOW_BUILDER_CALL = { timeoutMs: 100_000, retries: 0 };
     function shouldRegister(_toolName) {
         return true;
     }
@@ -90,7 +95,7 @@ export function createCoinversaServer(options = {}) {
     const builderAddressSchema = z
         .string()
         .regex(/^0x[a-fA-F0-9]{40}$/, "Must be a valid Ethereum address (0x followed by 40 hex characters)")
-        .describe("Builder address (0x...) — the fee-receiving address a frontend/bot/dex registers on Hyperliquid");
+        .describe("Builder address (0x...)");
     /**
      * Normalize a coin/symbol string: uppercase the coin name while preserving
      * lowercase builder dex prefix (e.g. "xyz:silver" → "xyz:SILVER", "btc" → "BTC").
@@ -103,10 +108,11 @@ export function createCoinversaServer(options = {}) {
         }
         return raw.toUpperCase();
     }
-    // ─── API Helper (with timeout + retries + friendly errors) ─
-    async function callAPI(useToon, path, params) {
+    async function callAPI(useToon, path, params, callOpts = {}) {
+        const timeoutMs = callOpts.timeoutMs ?? REQUEST_TIMEOUT_MS;
+        const maxRetries = callOpts.retries ?? MAX_RETRIES;
         if (!apiKey) {
-            throw new Error("Coinversa API key required. Set COINVERSAA_API_KEY for stdio, or send Authorization: Bearer <key> / X-API-Key to the remote MCP server.");
+            throw new Error("Coinversa API key required. Set COINVERSAA_API_KEY (get a key at https://developers.coinversa.ai/keys), or use the hosted connector at https://mcp.coinversa.ai/mcp.");
         }
         const url = new URL(`${BASE}${path}`);
         if (params) {
@@ -117,10 +123,10 @@ export function createCoinversaServer(options = {}) {
             });
         }
         let lastError = null;
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
                 const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+                const timeout = setTimeout(() => controller.abort(), timeoutMs);
                 const headers = {};
                 if (apiKey)
                     headers["X-API-Key"] = apiKey;
@@ -131,7 +137,7 @@ export function createCoinversaServer(options = {}) {
                 clearTimeout(timeout);
                 if (response.status === 429) {
                     // Rate limited — retry after delay
-                    if (attempt < MAX_RETRIES) {
+                    if (attempt < maxRetries) {
                         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
                         continue;
                     }
@@ -176,7 +182,7 @@ export function createCoinversaServer(options = {}) {
             }
             catch (err) {
                 if (err.name === "AbortError") {
-                    lastError = new Error("Request timed out after 30 seconds. The server may be under heavy load — try again.");
+                    lastError = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds. The server may still be computing this answer — try again in a minute; results are cached once ready.`);
                 }
                 else if (err.cause?.code === "ECONNREFUSED" || err.cause?.code === "ENOTFOUND") {
                     lastError = new Error("Cannot connect to the Coinversa API. Check your COINVERSAA_API_URL setting and network connection.");
@@ -185,7 +191,7 @@ export function createCoinversaServer(options = {}) {
                     lastError = err;
                 }
                 // Retry on transient network errors
-                if (attempt < MAX_RETRIES && (err.name === "AbortError" || err.cause?.code === "ECONNRESET")) {
+                if (attempt < maxRetries && (err.name === "AbortError" || err.cause?.code === "ECONNRESET")) {
                     await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
                     continue;
                 }
@@ -202,6 +208,11 @@ export function createCoinversaServer(options = {}) {
     function toolResult(data) {
         return { content: [{ type: "text", text: formatJSON(data) }] };
     }
+    // Shared annotations for every tool: all 103 are read-only, non-destructive,
+    // safely repeatable GETs against the public Coinversa API (open world).
+    const annotations = {
+        readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true,
+    };
     // ─── Create Server ───────────────────────────────────────
     const SERVER_INSTRUCTIONS = `Coinversa Pulse — Crypto intelligence for AI agents.
 
@@ -323,7 +334,7 @@ EXCHANGE AGGREGATES (v0.9):
   Builder dexes (HIP-3) are ~43% of Hyperliquid volume; most trackers'
   headline numbers count native only, so cite the by-dex split when comparing.
 
-BUILDER ANALYTICS (new in 0.11):
+BUILDER ANALYTICS (0.11; journey/lifecycle/heatmap/orders new in 0.11.1):
 - builder_leaderboard → builders ranked by exact ledger revenue [Starter]
 - builder_profile     → one builder: revenue, daily series, top coins [Starter]
 - builder_traders     → wallets trading via a builder, with cohort tiers [Pro]
@@ -331,6 +342,10 @@ BUILDER ANALYTICS (new in 0.11):
 - builder_cohorts     → a builder's user base split by behavioral tier [Pro]
 - builder_retention   → monthly new-user retention triangle [Pro]
 - builder_overlap     → which other builders share this one's users [Pro]
+- builder_journey     → how fast a builder monetizes new-user cohorts [Pro]
+- builder_lifecycle   → active/cooling/switched/dormant/movedOn user split [Pro]
+- builder_heatmap     → 7x24 UTC weekday-by-hour activity grid, 12 weeks [Pro]
+- builder_orders      → order intent: action/TIF mix, stops, fill rate [Pro]
 - trader_builders     → the builders one wallet trades through [Starter]
 Tiers on builder_traders/builder_cohorts are ALL-TIME exchange-wide labels
 (legacy slugs), not the 30d-rolling tiers the pulse_cohort_recent_* tools use.
@@ -347,7 +362,7 @@ TIPS:
 - The list_markets tool accepts an optional dex filter to narrow results`;
     const server = new McpServer({
         name: "coinversaa-pulse",
-        version: "0.11.0",
+        version: "0.11.1",
     }, {
         instructions: SERVER_INSTRUCTIONS,
     });
@@ -356,19 +371,23 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_global_stats"))
         server.registerTool("pulse_global_stats", {
+            title: "Global Stats",
             description: "Get global Hyperliquid trading statistics: total traders, trades, volume, PnL, and data coverage period. Use this to understand the overall scale of the market.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/pulse/stats")));
     // ══════════════════════════════════════════════════════════
     // TOOL 2: Market Overview                           [FREE]
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_market_overview"))
         server.registerTool("pulse_market_overview", {
-            description: "DEPRECATED alias for list_markets — returns the same payload (24h volume, open interest, mark price, raw hourly fundingRate decimal, 24h change for every pair). To display funding APR percent, calculate fundingRate * 24 * 365 * 100. Prefer list_markets for new integrations; this tool is kept for backward compatibility only.",
+            title: "Market Overview",
+            description: "DEPRECATED alias for list_markets — returns the same payload (24h volume, open interest, mark price, funding rate, 24h change for every pair). Prefer list_markets for new integrations; this tool is kept for backward compatibility only.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 dex: z.enum(["hl", "xyz", "flx", "vntl", "hyna", "km", "abcd", "cash"]).optional().describe("Filter by dex. 'hl' for native Hyperliquid only, or a builder dex name (xyz, cash, km, etc.). Omit for all markets."),
             },
+            annotations,
         }, async ({ useToonFormat, dex }) => {
             const params = {};
             if (dex)
@@ -380,11 +399,13 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("list_markets"))
         server.registerTool("list_markets", {
-            description: "CANONICAL market discovery tool. Returns every trading symbol on Hyperliquid and its builder dexes with dex, mark price, 24h volume, raw hourly fundingRate decimal, open interest, and 24h change. To display funding APR percent, calculate fundingRate * 24 * 365 * 100 (example: 0.00000625 = 5.475% APR). Use this whenever the user asks 'what markets are available?', mentions a commodity (gold, silver, oil), stock (TSLA, AAPL, NVDA), or builder-dex market. Prefer this over pulse_market_overview (same data, kept only for backward compat). For asset-level grouping across venues, use list_assets instead.",
+            title: "List Markets",
+            description: "CANONICAL market discovery tool. Returns every trading symbol on Hyperliquid and its builder dexes with dex, mark price, 24h volume, funding rate, open interest, and 24h change. Use this whenever the user asks 'what markets are available?', mentions a commodity (gold, silver, oil), stock (TSLA, AAPL, NVDA), or builder-dex market. Prefer this over pulse_market_overview (same data, kept only for backward compat). For asset-level grouping across venues, use list_assets instead.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 dex: z.enum(["hl", "xyz", "flx", "vntl", "hyna", "km", "abcd", "cash"]).optional().describe("Filter by dex. 'hl' for native Hyperliquid, 'xyz' for commodities/stocks, 'cash' for equities, 'km' for energy, etc. Omit for all markets."),
             },
+            annotations,
         }, async ({ useToonFormat, dex }) => {
             const params = {};
             if (dex)
@@ -399,11 +420,13 @@ TIPS:
     // and synonym resolution (e.g. PAXG is shown as a synonym of GOLD).
     if (shouldRegister("list_assets"))
         server.registerTool("list_assets", {
+            title: "List Assets",
             description: "Directory of every canonical asset that trades on Hyperliquid or any builder dex, grouped by economic exposure (not by venue ticker). Each asset entry lists its synonyms (e.g. PAXG is a synonym of GOLD), which venues it trades on, aggregated open interest, and a cross-market flag (listed on 2+ venues). Prefer this over list_markets when the user asks 'what assets are available?', 'which venues is GOLD on?', or 'show me cross-market assets'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 crossMarketOnly: z.boolean().optional().describe("If true, return only assets listed on 2+ venues. Default: false (return all)."),
             },
+            annotations,
         }, async ({ useToonFormat, crossMarketOnly }) => {
             const params = {};
             if (crossMarketOnly)
@@ -415,11 +438,13 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("list_asset"))
         server.registerTool("list_asset", {
+            title: "Asset Lookup",
             description: "Lookup one asset by canonical name or synonym. Returns every venue it trades on, collateral tokens, open interest per venue, and synonyms list. Accepts both canonical names (GOLD, BTC) and synonyms (PAXG, XAUT) — the server resolves them. Use when the user mentions a specific asset and you need its venue availability.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 canonical: z.string().min(1).max(40).describe("Canonical asset name or synonym. Examples: 'GOLD', 'PAXG', 'BTC', 'SILVER', 'HYPE'. The server resolves synonyms to canonical."),
             },
+            annotations,
         }, async ({ useToonFormat, canonical }) => {
             return toolResult(await callAPI(useToonFormat, `/assets/${encodeURIComponent(canonical)}`));
         });
@@ -432,11 +457,13 @@ TIPS:
     // venues?"). Returns per-venue long/short/bias plus the cross-venue total.
     if (shouldRegister("pulse_cross_market_asset"))
         server.registerTool("pulse_cross_market_asset", {
+            title: "Cross-Market Asset",
             description: "Cross-market aggregation for one asset: per-venue long/short positions, notional, net bias, unique wallets, leverage, plus a cross-venue total. Also returns biasRange (max-min netBias across venues) to detect disagreement. Accepts canonical names or synonyms (e.g. PAXG resolves to GOLD). Use when the user asks 'is gold crowded?', 'do different dexes disagree on BTC direction?', 'total OI on ETH across all venues?'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 canonical: z.string().min(1).max(40).describe("Canonical asset name or synonym (e.g. 'GOLD', 'PAXG', 'BTC', 'HYPE'). The server resolves synonyms."),
             },
+            annotations,
         }, async ({ useToonFormat, canonical }) => {
             return toolResult(await callAPI(useToonFormat, `/assets/${encodeURIComponent(canonical)}/cross-market`));
         });
@@ -445,6 +472,7 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_leaderboard"))
         server.registerTool("pulse_leaderboard", {
+            title: "Trader Leaderboard",
             description: "Get ranked trader leaderboard. Sort by PnL, win rate, volume, score, or risk-adjusted returns. Filter by time period (day/week/month/allTime) and minimum trade count. Use this to find the best traders on Hyperliquid.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -453,12 +481,14 @@ TIPS:
                 limit: z.number().min(1).max(100).default(20).describe("Number of traders to return"),
                 minTrades: z.number().default(100).describe("Minimum trade count filter"),
             },
+            annotations,
         }, async ({ useToonFormat, sort, period, limit, minTrades }) => toolResult(await callAPI(useToonFormat, "/pulse/leaderboard", { sort, period, limit: String(limit), minTrades: String(minTrades) })));
     // ══════════════════════════════════════════════════════════
     // TOOL 4: Hidden Gems
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_hidden_gems"))
         server.registerTool("pulse_hidden_gems", {
+            title: "Hidden Gems",
             description: "Discover underrated high-performing traders who fly under the radar. Filters by minimum win rate, PnL, and trade count. These are skilled traders that most platforms don't surface.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -468,6 +498,7 @@ TIPS:
                 maxTrades: z.number().default(500).describe("Maximum number of trades (filters out well-known whales)"),
                 limit: z.number().min(1).max(100).default(20).describe("Number of traders to return"),
             },
+            annotations,
         }, async ({ useToonFormat, minWinRate, minPnl, minTrades, maxTrades, limit }) => toolResult(await callAPI(useToonFormat, "/pulse/hidden-gems", {
             minWinRate: String(minWinRate),
             minPnl: String(minPnl),
@@ -480,14 +511,17 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_cohort_summary"))
         server.registerTool("pulse_cohort_summary", {
-            description: "Get behavioral cohort analysis across every tracked wallet on Hyperliquid. Returns PnL tiers (Apex/apex, Sharps/sharps, Grinders/grinders, Scrapers/scrapers, The Crowd/crowd, Bleeders/bleeders, Trapped/trapped, Blown Out/blown_out) and size tiers (Heavyweights/heavyweights, Cruiserweights/cruiserweights, Middleweights/middleweights, etc). Response payloads still use legacy slugs (money_printer, leviathan, ...). Each tier shows wallet count, avg PnL, avg win rate, and total volume. This is unique intelligence nobody else has. For the current tracked-wallet total, call pulse_global_stats first.",
+            title: "Cohort Summary",
+            description: "Get behavioral cohort analysis across every tracked wallet on Hyperliquid. Returns PnL tiers (Apex/apex, Sharps/sharps, Grinders/grinders, Scrapers/scrapers, The Crowd/crowd, Bleeders/bleeders, Trapped/trapped, Blown Out/blown_out) and size tiers (Heavyweights/heavyweights, Cruiserweights/cruiserweights, Middleweights/middleweights, etc). Response payloads still use legacy slugs (money_printer, leviathan, ...). Each tier shows wallet count, avg PnL, avg win rate, and total volume. For the current tracked-wallet total, call pulse_global_stats first.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/pulse/cohorts/summary")));
     // ══════════════════════════════════════════════════════════
     // TOOL 6: Cohort Positions (What whales are doing NOW)
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_cohort_positions"))
         server.registerTool("pulse_cohort_positions", {
+            title: "Cohort Positions",
             description: "See what a specific trader cohort is holding RIGHT NOW. For example, get all live positions held by 'apex' (Apex) tier traders or 'heavyweights' (Heavyweights) size wallets. This is real-time whale intelligence.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -495,56 +529,66 @@ TIPS:
                 tier: tierSchema,
                 limit: z.number().min(1).max(200).default(50).describe("Number of positions to return"),
             },
+            annotations,
         }, async ({ useToonFormat, tierType, tier, limit }) => toolResult(await callAPI(useToonFormat, `/pulse/cohorts/${tierType}/${normalizeTier(tier)}/positions`, { limit: String(limit) })));
     // ══════════════════════════════════════════════════════════
     // TOOL 7: Trader Profile
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_trader_profile"))
         server.registerTool("pulse_trader_profile", {
+            title: "Trader Profile",
             description: "Get full profile for any Hyperliquid trader by wallet address. Returns total PnL, trade count, win rate, volume, largest win/loss, first/last trade dates, PnL tier, size tier, and profit factor. Use this for due diligence on any wallet.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
             },
+            annotations,
         }, async ({ useToonFormat, address }) => toolResult(await callAPI(useToonFormat, `/pulse/trader/${address}`)));
     // ══════════════════════════════════════════════════════════
     // TOOL 8: Trader Performance
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_trader_performance"))
         server.registerTool("pulse_trader_performance", {
+            title: "Trader Performance",
             description: "Get performance comparison for a trader: 30-day vs all-time PnL, trade count, win rate, and trend direction (improving/declining/stable). Use this to evaluate if a trader is currently hot or cooling off.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
             },
+            annotations,
         }, async ({ useToonFormat, address }) => toolResult(await callAPI(useToonFormat, `/pulse/trader/${address}/performance`)));
     // ══════════════════════════════════════════════════════════
     // TOOL 9: Price Lookup                              [FREE]
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("market_price"))
         server.registerTool("market_price", {
+            title: "Market Price",
             description: "Get current mark price for any trading pair on Hyperliquid. Use standard symbols (BTC, ETH, SOL) or builder dex format (xyz:SILVER, km:OIL, cash:TSLA).",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 symbol: z.string().min(1).max(20).describe("Trading pair symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN format (e.g. xyz:SILVER, km:OIL, cash:TSLA)"),
             },
+            annotations,
         }, async ({ useToonFormat, symbol }) => toolResult(await callAPI(useToonFormat, `/market/price/${normalizeCoin(symbol)}`)));
     // ══════════════════════════════════════════════════════════
     // TOOL 10: Wallet Positions
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("market_positions"))
         server.registerTool("market_positions", {
+            title: "Wallet Open Positions",
             description: "Get all open positions for any wallet address on Hyperliquid. Shows current entries, sizes, unrealized PnL, and leverage for each position.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
             },
+            annotations,
         }, async ({ useToonFormat, address }) => toolResult(await callAPI(useToonFormat, `/market/positions/${address}`)));
     // ══════════════════════════════════════════════════════════
     // TOOL 11: Recent Trades (Global)
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_recent_trades"))
         server.registerTool("pulse_recent_trades", {
+            title: "Recent Trades",
             description: "Get the biggest trades on Hyperliquid in the last N minutes/hours. Returns trades sorted by absolute PnL — the largest movers. Use this to see what's happening right now on the exchange.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -552,6 +596,7 @@ TIPS:
                 limit: z.number().min(1).max(100).default(20).describe("Number of trades to return"),
                 coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER)"),
             },
+            annotations,
         }, async ({ useToonFormat, since, limit, coin }) => {
             const params = { since, limit: String(limit) };
             if (coin)
@@ -563,6 +608,7 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_trader_trades"))
         server.registerTool("pulse_trader_trades", {
+            title: "Trader Trades",
             description: "Get recent trades for a specific wallet address. See exactly what a trader has been doing in the last minutes/hours — every buy, sell, size, price, and PnL. Essential for copy-trading and due diligence.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -571,6 +617,7 @@ TIPS:
                 limit: z.number().min(1).max(100).default(50).describe("Number of trades to return"),
                 coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER)"),
             },
+            annotations,
         }, async ({ useToonFormat, address, since, limit, coin }) => {
             const params = { since, limit: String(limit) };
             if (coin)
@@ -582,7 +629,8 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_cohort_trades"))
         server.registerTool("pulse_cohort_trades", {
-            description: "See every trade a specific cohort has made recently. For example: 'show me all trades the apex (Apex) tier made in the last hour.' This is real-time alpha — nobody else has this data as an API.",
+            title: "Cohort Trades",
+            description: "See every trade a specific cohort has made recently. For example: 'show me all trades the apex (Apex) tier made in the last hour.'",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 tierType: z.enum(["pnl", "size"]).describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers"),
@@ -590,19 +638,22 @@ TIPS:
                 since: sinceSchema.default("1h"),
                 limit: z.number().min(1).max(100).default(50).describe("Number of trades to return"),
             },
+            annotations,
         }, async ({ useToonFormat, tierType, tier, since, limit }) => toolResult(await callAPI(useToonFormat, `/pulse/cohorts/${tierType}/${normalizeTier(tier)}/trades`, { since, limit: String(limit) })));
     // ══════════════════════════════════════════════════════════
     // TOOL 14: Liquidation Heatmap
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_liquidation_heatmap"))
         server.registerTool("live_liquidation_heatmap", {
-            description: "Get a liquidation heatmap for any coin. Shows where liquidation clusters are across price levels — essential for identifying support/resistance and potential squeeze zones. Unique data nobody else exposes.",
+            title: "Live Liquidation Heatmap",
+            description: "Get a liquidation heatmap for any coin. Shows where liquidation clusters are across price levels — essential for identifying support/resistance and potential squeeze zones.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN (e.g. xyz:SILVER, km:OIL, cash:TSLA)"),
                 buckets: z.number().min(10).max(100).default(50).describe("Number of price buckets in the heatmap"),
                 range: z.number().min(1).max(50).default(30).describe("Price range percentage around current price"),
             },
+            annotations,
         }, async ({ useToonFormat, coin, buckets, range }) => toolResult(await callAPI(useToonFormat, `/live/liquidation-heatmap/${normalizeCoin(coin)}`, {
             buckets: String(buckets),
             range: String(range),
@@ -612,45 +663,53 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_risk_overview"))
         server.registerTool("live_risk_overview", {
+            title: "Live Risk Overview",
             description: "Get the exchange-wide market risk snapshot. Best for questions like 'what looks fragile right now?' or 'which coins are most crowded?'. Returns total open interest, leverage, crowding concentration, near-liquidation exposure, 7-day liquidation totals, and the top coins where positioning looks most fragile.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
             },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/live/risk/overview")));
     // ══════════════════════════════════════════════════════════
     // TOOL 16: Coin Risk Snapshot
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_coin_risk_snapshot"))
         server.registerTool("live_coin_risk_snapshot", {
+            title: "Live Coin Risk Snapshot",
             description: "Get the current risk snapshot for a single coin. Use this when a user asks 'is BTC crowded?', 'who is holding the risk?', or 'how liquidation-prone is this market right now?'. Returns OI, wallet count, long/short posture, position-size concentration, top positions, liquidation heatmap, and 7-day liquidation totals.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN (e.g. xyz:GOLD, km:OIL, cash:TSLA)"),
             },
+            annotations,
         }, async ({ useToonFormat, coin }) => toolResult(await callAPI(useToonFormat, `/live/risk/coins/${normalizeCoin(coin)}`)));
     // ══════════════════════════════════════════════════════════
     // TOOL 17: Coin Risk History
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_coin_risk_history"))
         server.registerTool("live_coin_risk_history", {
-            description: "Get the historical risk lane for a coin. Best for questions like 'how did this setup become fragile?' or 'did the Sharps rotate before the move?'. Returns hourly OI, long/short history, cohort rotation, candle data, mark/oracle dislocation history when available, and liquidation counts over time.",
+            title: "Live Coin Risk History",
+            description: "Get the historical risk lane for a coin. Best for questions like 'how did this setup become fragile?' or 'did smart money rotate before the move?'. Returns hourly OI, long/short history, cohort rotation, candle data, mark/oracle dislocation history when available, and liquidation counts over time.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN"),
                 hours: z.number().min(1).max(720).default(168).describe("Number of hours of history to return (default 168 = 7 days, max 720 = 30 days)"),
             },
+            annotations,
         }, async ({ useToonFormat, coin, hours }) => toolResult(await callAPI(useToonFormat, `/live/risk/coins/${normalizeCoin(coin)}/history`, { hours: String(hours) })));
     // ══════════════════════════════════════════════════════════
     // TOOL 18: Mark Dislocations
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_mark_dislocations"))
         server.registerTool("live_mark_dislocations", {
+            title: "Live Mark Dislocations",
             description: "Get historical mark/oracle dislocation data for a coin. Use this to answer questions like 'did basis stress or oracle drift show up before liquidations?'. Returns timestamped mark price, oracle price, and basis percentage over the last 30 days.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN"),
                 hours: z.number().min(1).max(720).default(168).describe("Number of hours of history to return (default 168 = 7 days, max 720 = 30 days)"),
             },
+            annotations,
         }, async ({ useToonFormat, coin, hours }) => {
             const history = await callAPI(false, `/live/risk/coins/${normalizeCoin(coin)}/history`, { hours: String(hours) });
             const result = {
@@ -670,6 +729,7 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_recent_liquidations"))
         server.registerTool("live_recent_liquidations", {
+            title: "Live Recent Liquidations",
             description: "Get real liquidation events from the syncer. Best for questions like 'where did forced unwind activity actually hit?' or 'show me BTC liquidations over the last 30 days'. Returns wallet, coin, penalty fee, and closed PnL.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -677,6 +737,7 @@ TIPS:
                 coin: z.string().optional().describe("Optional coin filter (e.g. BTC, ETH, SOL or builder dex prefix:COIN)"),
                 limit: z.number().min(1).max(200).default(50).describe("Number of liquidation events to return"),
             },
+            annotations,
         }, async ({ useToonFormat, since, coin, limit }) => {
             const params = { since, limit: String(limit) };
             if (coin)
@@ -688,12 +749,14 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_liquidation_summary"))
         server.registerTool("live_liquidation_summary", {
+            title: "Live Liquidation Summary",
             description: "Get an aggregated liquidation summary over a time window. This is the best liquidation tool for summaries, rankings, and trend analysis. Returns event count, penalty fees, closed PnL, per-coin rollups, and a liquidation timeline.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 since: sinceSchema.default("7d"),
                 coin: z.string().optional().describe("Optional coin filter (e.g. BTC, ETH, SOL or builder dex prefix:COIN)"),
             },
+            annotations,
         }, async ({ useToonFormat, since, coin }) => {
             const params = { since };
             if (coin)
@@ -705,12 +768,14 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_long_short_ratio"))
         server.registerTool("live_long_short_ratio", {
+            title: "Live Long/Short Ratio",
             description: "Get long/short ratio data. Without a coin, returns the global ratio across all Hyperliquid. With a coin, returns that specific pair's ratio. Optionally include historical data over the last N hours.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 coin: z.string().optional().describe("Coin symbol (e.g. BTC, ETH). For builder dex: prefix:COIN (e.g. xyz:SILVER). Omit for global ratio."),
                 hours: z.number().min(1).max(168).optional().describe("Include historical data for the last N hours (max 168 = 7 days)"),
             },
+            annotations,
         }, async ({ useToonFormat, coin, hours }) => {
             if (hours) {
                 // Historical mode
@@ -729,28 +794,33 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_cohort_bias"))
         server.registerTool("live_cohort_bias", {
+            title: "Live Cohort Bias",
             description: "See what each trader cohort is doing on a specific coin RIGHT NOW. Returns the net long/short bias for every tier (Apex, Sharps, Middleweights, etc.) on the given coin. Answers questions like 'are the Sharps traders long or short ETH?'",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN (e.g. xyz:SILVER, km:OIL, cash:TSLA)"),
             },
+            annotations,
         }, async ({ useToonFormat, coin }) => toolResult(await callAPI(useToonFormat, `/live/cohort-bias/${normalizeCoin(coin)}`)));
     // ══════════════════════════════════════════════════════════
     // TOOL 17: Trader Daily Stats
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_trader_daily_stats"))
         server.registerTool("pulse_trader_daily_stats", {
+            title: "Trader Daily Stats",
             description: "Get day-by-day performance breakdown for any trader. Returns daily PnL, trade count, win rate, and volume for each day the trader was active. Use for deep due diligence and identifying consistency patterns.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
             },
+            annotations,
         }, async ({ useToonFormat, address }) => toolResult(await callAPI(useToonFormat, `/pulse/trader/${address}/daily`)));
     // ══════════════════════════════════════════════════════════
     // TOOL 18: Biggest Wins & Losses (Global)
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_biggest_trades"))
         server.registerTool("pulse_biggest_trades", {
+            title: "Biggest Trades",
             description: "Get the biggest winning or losing trades across all of Hyperliquid. Use type='wins' for the largest profitable trades, or type='losses' for the largest losses. Useful for market sentiment and narrative analysis.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -758,6 +828,7 @@ TIPS:
                 limit: z.number().min(1).max(50).default(20).describe("Number of trades to return"),
                 threshold: z.number().optional().describe("Minimum PnL for wins (e.g. 50000) or maximum PnL for losses (e.g. -50000)"),
             },
+            annotations,
         }, async ({ useToonFormat, type, limit, threshold }) => {
             if (type === "wins") {
                 const params = { limit: String(limit) };
@@ -777,52 +848,61 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("market_orderbook"))
         server.registerTool("market_orderbook", {
+            title: "Market Order Book",
             description: "Get the order book (bid/ask depth) for any trading pair on Hyperliquid. Shows price levels and sizes on both sides. Essential for understanding liquidity, spread, and potential support/resistance.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 symbol: z.string().min(1).max(20).describe("Trading pair symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN format (e.g. xyz:SILVER, km:OIL, cash:TSLA)"),
                 depth: z.number().min(1).max(50).default(10).describe("Number of price levels on each side"),
             },
+            annotations,
         }, async ({ useToonFormat, symbol, depth }) => toolResult(await callAPI(useToonFormat, `/market/orderbook/${normalizeCoin(symbol)}`, { depth: String(depth) })));
     // ══════════════════════════════════════════════════════════
     // TOOL 20: Token Leaderboard
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_token_leaderboard"))
         server.registerTool("pulse_token_leaderboard", {
+            title: "Token Leaderboard",
             description: "Get the top traders for a specific coin. Answers questions like 'who are the best BTC traders?' or 'who profits most from SOL?'. Returns ranked traders with PnL, trade count, win rate, and volume for that specific coin.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN (e.g. xyz:SILVER, km:OIL, cash:TSLA)"),
                 limit: z.number().min(1).max(100).default(50).describe("Number of traders to return"),
             },
+            annotations,
         }, async ({ useToonFormat, coin, limit }) => toolResult(await callAPI(useToonFormat, `/pulse/token-leaderboard/${normalizeCoin(coin)}`, { limit: String(limit) })));
     // ══════════════════════════════════════════════════════════
     // TOOL 21: Trader Token Stats
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_trader_token_stats"))
         server.registerTool("pulse_trader_token_stats", {
+            title: "Trader Token Stats",
             description: "Get token-by-token P&L breakdown for any trader. Shows which coins they trade, their PnL per coin, win rate per coin, and volume per coin. Use to understand a trader's edge — e.g. 'this trader only makes money on ETH and loses on everything else.'",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
             },
+            annotations,
         }, async ({ useToonFormat, address }) => toolResult(await callAPI(useToonFormat, `/pulse/trader/${address}/tokens`)));
     // ══════════════════════════════════════════════════════════
     // TOOL 22: Most Traded Coins                        [FREE]
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_most_traded_coins"))
         server.registerTool("pulse_most_traded_coins", {
+            title: "Most Traded Coins",
             description: "Get the most actively traded coins on Hyperliquid, ranked by trade count and volume. Use to understand what the market is focused on right now.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 limit: z.number().min(1).max(100).default(20).describe("Number of coins to return"),
             },
+            annotations,
         }, async ({ useToonFormat, limit }) => toolResult(await callAPI(useToonFormat, "/pulse/most-traded", { limit: String(limit) })));
     // ══════════════════════════════════════════════════════════
     // TOOL 23: Cohort History
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_cohort_history"))
         server.registerTool("pulse_cohort_history", {
+            title: "Cohort History",
             description: "Get historical performance data for a specific trader cohort over time. Shows how a tier's aggregate PnL, trade count, and activity have changed day-by-day. Use to spot trends like 'the sharps (Sharps) tier has been increasingly bearish over the last month.'",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -830,13 +910,15 @@ TIPS:
                 tier: tierSchema,
                 days: z.number().min(1).max(365).default(30).describe("Number of days of history to return"),
             },
+            annotations,
         }, async ({ useToonFormat, tierType, tier, days }) => toolResult(await callAPI(useToonFormat, `/pulse/cohorts/${tierType}/${normalizeTier(tier)}/history`, { days: String(days) })));
     // ══════════════════════════════════════════════════════════
     // TOOL 24: Trader Closed Positions
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_trader_closed_positions"))
         server.registerTool("pulse_trader_closed_positions", {
-            description: "Closed-position history for a wallet from the legacy closed_positions table (entry/exit prices, hold duration, PnL, leverage). SUPERSEDED by pulse_trader_lifecycles, which reads the corrected position_lifecycles_full table — more history, MAE/MFE execution quality, and spot coverage. Prefer pulse_trader_lifecycles; kept for backward compatibility.",
+            title: "Trader Closed Positions",
+            description: "Get closed position history for any wallet. Shows every position that was opened and closed — with entry/exit prices, hold duration, PnL, and leverage. Use this to analyze a trader's position lifecycle and timing patterns. Answers: 'Show me all historical positions for this trader', 'What was the PnL and duration of each position?', 'When did this whale close their massive ETH long?'",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
@@ -844,6 +926,7 @@ TIPS:
                 offset: z.number().min(0).default(0).describe("Pagination offset"),
                 coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER)"),
             },
+            annotations,
         }, async ({ useToonFormat, address, limit, offset, coin }) => {
             const params = { limit: String(limit), offset: String(offset) };
             if (coin)
@@ -855,18 +938,21 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_trader_closed_position_stats"))
         server.registerTool("pulse_trader_closed_position_stats", {
-            description: "Aggregate stats for a wallet's closed positions (avg hold duration, position win rate, total positions, PnL summary) from the legacy closed_positions table. SUPERSEDED by pulse_trader_lifecycle_summary, which reads the corrected position_lifecycles_full table (richer, more history). Prefer pulse_trader_lifecycle_summary; kept for backward compatibility.",
+            title: "Trader Closed Position Stats",
+            description: "Get aggregate statistics about a trader's closed positions: average hold duration, win rate by position (not by fill), total positions closed, and PnL summary. Use this to understand how long a trader typically holds and their position-level performance. Answers: 'What is this trader's average hold time?', 'Win rate by position (not by fill)?', 'Is this trader a scalper or swing trader?', 'Average PnL per position?'",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
             },
+            annotations,
         }, async ({ useToonFormat, address }) => toolResult(await callAPI(useToonFormat, `/pulse/trader/${address}/closed-positions/stats`)));
     // ══════════════════════════════════════════════════════════
     // TOOL 26: Recent Closed Positions (Global)
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_recent_closed_positions"))
         server.registerTool("pulse_recent_closed_positions", {
-            description: "Global feed of recently closed positions across all traders, from the legacy closed_positions table. SUPERSEDED by pulse_lifecycles_recent, which reads the corrected position_lifecycles_full table (adds MAE/MFE + spot coverage). Prefer pulse_lifecycles_recent; kept for backward compatibility.",
+            title: "Recent Closed Positions",
+            description: "Get recently closed positions across all traders. See what positions were just closed in the last N minutes/hours — with entry/exit prices and hold duration. Filterable by coin, minimum notional size, and hold duration range. Use to find: sub-second HFT trades (maxDuration=1000), positions that just got stopped out, large positions that just closed (minNotional=100000), quick scalps vs long holds.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 since: sinceSchema.default("1h"),
@@ -876,6 +962,7 @@ TIPS:
                 minDuration: z.number().optional().describe("Minimum hold duration in milliseconds (e.g. 60000 for positions held at least 1 minute)"),
                 maxDuration: z.number().optional().describe("Maximum hold duration in milliseconds (e.g. 1000 for sub-second HFT trades, 60000 for under 1 minute)"),
             },
+            annotations,
         }, async ({ useToonFormat, since, limit, coin, minNotional, minDuration, maxDuration }) => {
             const params = { since, limit: String(limit) };
             if (coin)
@@ -893,6 +980,7 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_lifecycles_recent"))
         server.registerTool("pulse_lifecycles_recent", {
+            title: "Recent Closed Lifecycles",
             description: "Global feed of the most recently CLOSED position lifecycles across ALL wallets — 'what just closed exchange-wide right now'. Reads the corrected position_lifecycles_full table: includes MAE/MFE (when backfilled), a liquidation flag, and optional spot. Cross-wallet successor to pulse_recent_closed_positions. Filter by coin, minNotional, hold-duration range, and time window. Note: the very freshest closes may not have MAE/MFE yet — the risk backfill lags real-time, so recent rows can show null MAE/MFE.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -904,6 +992,7 @@ TIPS:
                 minDuration: z.number().optional().describe("Minimum hold duration in milliseconds (e.g. 60000 for >= 1 minute)."),
                 maxDuration: z.number().optional().describe("Maximum hold duration in milliseconds (e.g. 1000 for sub-second HFT)."),
             },
+            annotations,
         }, async ({ useToonFormat, since, limit, coin, includeSpot, minNotional, minDuration, maxDuration }) => {
             const params = { since, limit: String(limit), includeSpot: String(includeSpot) };
             if (coin)
@@ -920,12 +1009,17 @@ TIPS:
     // TOOL 27: Historical Open Interest
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("market_historical_oi"))
-        server.tool("market_historical_oi", "Get historical hourly open interest snapshots (notional USD). Supports per-coin filtering or global exchange aggregation. Max range is 30 days.", {
-            useToonFormat: useToonFormatSchema,
-            coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER). Omit for global exchange aggregate."),
-            since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '24h', '7d', '30d'"),
-            startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
-            endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+        server.registerTool("market_historical_oi", {
+            title: "Historical Open Interest",
+            description: "Get historical hourly open interest snapshots (notional USD). Supports per-coin filtering or global exchange aggregation. Max range is 30 days.",
+            inputSchema: {
+                useToonFormat: useToonFormatSchema,
+                coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER). Omit for global exchange aggregate."),
+                since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '24h', '7d', '30d'"),
+                startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
+                endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+            },
+            annotations,
         }, async ({ useToonFormat, coin, since, startTime, endTime }) => {
             const params = {};
             if (since)
@@ -943,23 +1037,30 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("market_recent_candles"))
         server.registerTool("market_recent_candles", {
+            title: "Recent Candles",
             description: "Get recent 1-minute candle history for a market. Best for short intraday structure checks, recent momentum, and micro-pullback analysis. This MCP tool is intentionally capped to the most recent 12 hours so agents do not fetch huge minute-bar dumps in one call.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 symbol: z.string().min(1).max(20).describe("Market symbol (e.g. BTC, ETH, SOL, xyz:GOLD, cash:TSLA)"),
                 limit: z.number().min(1).max(720).default(240).describe("Number of 1-minute candles to return. Capped at 720 candles (12h) to keep MCP responses practical."),
             },
+            annotations,
         }, async ({ useToonFormat, symbol, limit }) => toolResult(await callAPI(useToonFormat, `/pulse/market/candles/recent/${normalizeCoin(symbol)}`, { interval: "1m", limit: String(limit) })));
     // ══════════════════════════════════════════════════════════
     // TOOL 29: Cohort Bias History
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_cohort_bias_history"))
-        server.tool("pulse_cohort_bias_history", "Get historical hourly bias snapshots for all trader cohorts. Returns net long/short notional and account counts per tier. Use this to see how different cohorts (Sharps, Middleweights, The Crowd) have shifted their positioning over time. Supports per-coin or global aggregate. Max range is 30 days.", {
-            useToonFormat: useToonFormatSchema,
-            coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER). Omit for global exchange aggregate."),
-            since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '24h', '7d', '30d'"),
-            startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
-            endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+        server.registerTool("pulse_cohort_bias_history", {
+            title: "Cohort Bias History",
+            description: "Get historical hourly bias snapshots for all trader cohorts. Returns net long/short notional and account counts per tier. Use this to see how different groups (whales, smart money) have shifted their positioning over time. Supports per-coin or global aggregate. Max range is 30 days.",
+            inputSchema: {
+                useToonFormat: useToonFormatSchema,
+                coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER). Omit for global exchange aggregate."),
+                since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '24h', '7d', '30d'"),
+                startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
+                endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+            },
+            annotations,
         }, async ({ useToonFormat, coin, since, startTime, endTime }) => {
             const params = {};
             if (since)
@@ -976,11 +1077,16 @@ TIPS:
     // TOOL 30: Cohort Daily Performance Stats
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("pulse_cohort_performance_daily"))
-        server.tool("pulse_cohort_performance_daily", "Get historical daily performance statistics for all trader cohorts. Returns PnL, volume, trade counts, and active trader counts per tier. Use this to track the consistency and profitability of different groups over time. Max range is 30 days.", {
-            useToonFormat: useToonFormatSchema,
-            since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '7d', '14d', '30d'"),
-            startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
-            endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+        server.registerTool("pulse_cohort_performance_daily", {
+            title: "Cohort Daily Performance",
+            description: "Get historical daily performance statistics for all trader cohorts. Returns PnL, volume, trade counts, and active trader counts per tier. Use this to track the consistency and profitability of different groups over time. Max range is 30 days.",
+            inputSchema: {
+                useToonFormat: useToonFormatSchema,
+                since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '7d', '14d', '30d'"),
+                startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
+                endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+            },
+            annotations,
         }, async ({ useToonFormat, since, startTime, endTime }) => {
             const params = {};
             if (since)
@@ -996,12 +1102,14 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_oi_history"))
         server.registerTool("live_oi_history", {
+            title: "Live Open Interest History",
             description: "Get historical open interest data for any coin on Hyperliquid, or global OI across all coins. Best for identifying accumulation/distribution phases, market conviction shifts, and whether a move was backed by positioning. Default 7 days, max 30 days.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 coin: z.string().optional().describe("Coin symbol (e.g. BTC, ETH, SOL). Omit for global OI across all coins."),
                 hours: z.number().min(1).max(720).default(168).describe("Number of hours of history (default 168 = 7 days, max 720 = 30 days)"),
             },
+            annotations,
         }, async ({ useToonFormat, coin, hours }) => {
             if (coin) {
                 return toolResult(await callAPI(useToonFormat, `/live/oi-history/${coin.toUpperCase()}`, { hours: String(hours) }));
@@ -1018,6 +1126,7 @@ TIPS:
     // numbers against venue ground truth.
     if (shouldRegister("live_official_oi"))
         server.registerTool("live_official_oi", {
+            title: "Live Official Open Interest",
             description: "Official per-dex open interest for a coin, sourced from Hyperliquid's Info API (not derived from live_positions). Returns hourly snapshots with open interest, mark price, and 24h notional volume. Use when an agent needs venue-reported ground truth, per-dex breakdown, or wants to cross-check computed OI against official numbers. Default 7 days, max 30 days.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1025,6 +1134,7 @@ TIPS:
                 hours: z.number().min(1).max(720).default(168).describe("Number of hours of history (default 168 = 7 days, max 720 = 30 days)"),
                 dex: z.enum(["hl", "xyz", "flx", "vntl", "hyna", "km", "abcd", "cash"]).optional().default("hl").describe("Which dex's official OI to return. Defaults to 'hl' (native Hyperliquid)."),
             },
+            annotations,
         }, async ({ useToonFormat, coin, hours, dex }) => {
             const params = { hours: String(hours) };
             if (dex)
@@ -1036,6 +1146,7 @@ TIPS:
     // ══════════════════════════════════════════════════════════
     if (shouldRegister("live_cohort_bias_history"))
         server.registerTool("live_cohort_bias_history", {
+            title: "Live Cohort Bias History",
             description: "Get historical cohort bias data for a specific coin. Use this when a user asks 'were smart-money cohorts accumulating or exiting?' or 'which tier flipped first?'. Returns hourly net-bias snapshots for each tier or for a specific tier over time.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1044,6 +1155,7 @@ TIPS:
                 tier: tierSchema.optional().describe("Specific tier to track. Omit for all tiers in the category."),
                 hours: z.number().min(1).max(720).default(168).describe("Number of hours of history (default 168 = 7 days, max 720 = 30 days)"),
             },
+            annotations,
         }, async ({ useToonFormat, coin, tierType, tier, hours }) => {
             const params = { hours: String(hours), tierType };
             if (tier)
@@ -1060,30 +1172,37 @@ TIPS:
         .describe("HIP-4 outcome ID. Side-token coins are encoded as #<10*outcomeId+side>.");
     if (shouldRegister("hip4_outcomes"))
         server.registerTool("hip4_outcomes", {
+            title: "HIP-4 Outcomes",
             description: "List active HIP-4 outcome contracts that traded recently. Returns outcome IDs, question metadata when available, side tokens, fills, unique wallets, notional USDH, and first/last traded timestamps. Use when users ask what prediction/outcome markets are active.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 hours: z.number().int().min(1).max(168).default(24).describe("Look-back window in hours. Default 24, max 168."),
             },
+            annotations,
         }, async ({ useToonFormat, hours }) => toolResult(await callAPI(useToonFormat, "/hip4/outcomes", { hours: String(hours) })));
     if (shouldRegister("hip4_outcome"))
         server.registerTool("hip4_outcome", {
+            title: "HIP-4 Outcome Details",
             description: "Get details for one HIP-4 outcome contract by outcome ID. Returns metadata when available plus side tokens, fills, unique wallets, notional USDH, and trading timestamps.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 outcomeId: outcomeIdSchema,
             },
+            annotations,
         }, async ({ useToonFormat, outcomeId }) => toolResult(await callAPI(useToonFormat, `/hip4/outcomes/${outcomeId}`)));
     if (shouldRegister("hip4_outcome_summary"))
         server.registerTool("hip4_outcome_summary", {
+            title: "HIP-4 Outcome Summary",
             description: "Get the full HIP-4 summary for one outcome across both sides: fills, unique wallets, contracts, side notional, total notional, realized PnL, and trading window. Requires a Starter-or-higher key.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 outcomeId: outcomeIdSchema,
             },
+            annotations,
         }, async ({ useToonFormat, outcomeId }) => toolResult(await callAPI(useToonFormat, `/hip4/outcomes/${outcomeId}/summary`)));
     if (shouldRegister("hip4_outcome_recent_trades"))
         server.registerTool("hip4_outcome_recent_trades", {
+            title: "HIP-4 Outcome Recent Trades",
             description: "Get recent real fills for one HIP-4 outcome. Excludes settlement, pair-redeem, and auction-phase fills. Returns trade time, wallet, side, price, size, PnL, and fee.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1091,78 +1210,94 @@ TIPS:
                 hours: z.number().int().min(1).max(168).default(24).describe("Look-back window in hours. Default 24, max 168."),
                 limit: z.number().int().min(1).max(500).default(100).describe("Maximum trades to return. Default 100, max 500."),
             },
+            annotations,
         }, async ({ useToonFormat, outcomeId, hours, limit }) => toolResult(await callAPI(useToonFormat, `/hip4/outcomes/${outcomeId}/recent-trades`, {
             hours: String(hours),
             limit: String(limit),
         })));
     if (shouldRegister("hip4_questions"))
         server.registerTool("hip4_questions", {
+            title: "HIP-4 Questions",
             description: "List HIP-4 question metadata from Hyperliquid outcomeMeta, including question IDs, descriptions, fallback outcomes, named outcomes, settlement metadata, and parsed expiry/threshold fields when present.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/hip4/questions")));
     if (shouldRegister("hip4_recent_settlements"))
         server.registerTool("hip4_recent_settlements", {
+            title: "HIP-4 Recent Settlements",
             description: "List recent HIP-4 settlements. Returns outcome ID, settlement time, winning side when determinable, winner/loser fill counts, winner payouts, and loser losses.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 hours: z.number().int().min(1).max(720).default(168).describe("Look-back window in hours. Default 168, max 720."),
                 limit: z.number().int().min(1).max(200).default(50).describe("Maximum settlements to return. Default 50, max 200."),
             },
+            annotations,
         }, async ({ useToonFormat, hours, limit }) => toolResult(await callAPI(useToonFormat, "/hip4/settlements/recent", {
             hours: String(hours),
             limit: String(limit),
         })));
     if (shouldRegister("hip4_daily_volume"))
         server.registerTool("hip4_daily_volume", {
+            title: "HIP-4 Daily Volume",
             description: "Get daily HIP-4 volume trajectory: fills, unique trades, unique wallets, contracts, and notional USDH by day. Use for outcome-market activity trends.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 days: z.number().int().min(1).max(60).default(14).describe("Number of days back from today. Default 14, max 60."),
             },
+            annotations,
         }, async ({ useToonFormat, days }) => toolResult(await callAPI(useToonFormat, "/hip4/daily-volume", { days: String(days) })));
     if (shouldRegister("hip4_most_active"))
         server.registerTool("hip4_most_active", {
+            title: "HIP-4 Most Active Outcomes",
             description: "Return the most active HIP-4 outcomes over a recent window, ranked by fill count. Includes outcome/question metadata when available.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 hours: z.number().int().min(1).max(168).default(24).describe("Look-back window in hours. Default 24, max 168."),
                 limit: z.number().int().min(1).max(50).default(10).describe("Maximum outcomes to return. Default 10, max 50."),
             },
+            annotations,
         }, async ({ useToonFormat, hours, limit }) => toolResult(await callAPI(useToonFormat, "/hip4/most-active", {
             hours: String(hours),
             limit: String(limit),
         })));
     if (shouldRegister("hip4_top_traders"))
         server.registerTool("hip4_top_traders", {
+            title: "HIP-4 Top Traders",
             description: "Rank top HIP-4 outcome traders by recent outcome activity. Returns address, fills, distinct outcomes, contracts, notional USDH, and realized PnL. Requires a Starter-or-higher key.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 days: z.number().int().min(1).max(30).default(7).describe("Look-back window in days. Default 7, max 30."),
                 limit: z.number().int().min(1).max(100).default(25).describe("Maximum traders to return. Default 25, max 100."),
             },
+            annotations,
         }, async ({ useToonFormat, days, limit }) => toolResult(await callAPI(useToonFormat, "/hip4/top-traders", {
             days: String(days),
             limit: String(limit),
         })));
     if (shouldRegister("hip4_trader_outcomes"))
         server.registerTool("hip4_trader_outcomes", {
+            title: "HIP-4 Trader Outcomes",
             description: "Get one wallet's HIP-4 outcome history: outcome ID, side index, side token, fills, net shares, gross bought/sold USDH, realized PnL, and first/last traded. Requires a Starter-or-higher key.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
                 days: z.number().int().min(1).max(365).default(30).describe("Look-back window in days. Default 30, max 365."),
             },
+            annotations,
         }, async ({ useToonFormat, address, days }) => toolResult(await callAPI(useToonFormat, `/hip4/trader/${address}/outcomes`, { days: String(days) })));
     if (shouldRegister("hip4_cross_product_overlap"))
         server.registerTool("hip4_cross_product_overlap", {
+            title: "HIP-4 Cross-Product Overlap",
             description: "Measure overlap between HIP-4 outcome traders and perp traders over a recent window. Returns outcome trader count, perp trader count, overlap count, and overlap percentage. Requires a Pro-or-higher key.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 days: z.number().int().min(1).max(30).default(7).describe("Look-back window in days. Default 7, max 30."),
             },
+            annotations,
         }, async ({ useToonFormat, days }) => toolResult(await callAPI(useToonFormat, "/hip4/cross-product/overlap", { days: String(days) })));
     if (shouldRegister("hip4_perp_position_context"))
         server.registerTool("hip4_perp_position_context", {
+            title: "HIP-4 Perp Position Context",
             description: "Join one HIP-4 outcome's current net-positive holders to currently open perp positions on the same underlying asset. Returns per-side wallet counts, open-position overlap, long/short wallet counts, net underlying position, underlying notional, aligned vs hedge counts, prediction-native counts, and top wallets with signal labels. Use when users ask whether outcome traders are already exposed to the same asset, whether a side is directional or hedged, or which large outcome holders have no underlying perp exposure. Requires a Pro-or-higher key.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1170,6 +1305,7 @@ TIPS:
                 days: z.number().int().min(1).max(60).default(14).describe("Look-back window in days for reconstructing current outcome holders from outcome trades. Default 14, max 60."),
                 limit: z.number().int().min(1).max(100).default(25).describe("Maximum top outcome wallets to return. Default 25, max 100."),
             },
+            annotations,
         }, async ({ useToonFormat, outcomeId, days, limit }) => toolResult(await callAPI(useToonFormat, `/hip4/outcomes/${outcomeId}/perp-position-context`, {
             days: String(days),
             limit: String(limit),
@@ -1180,6 +1316,7 @@ TIPS:
     // ─── Position Lifecycles (per wallet) ─────────────────────
     if (shouldRegister("pulse_trader_lifecycles"))
         server.registerTool("pulse_trader_lifecycles", {
+            title: "Trader Position Lifecycles",
             description: "Get a wallet's position lifecycle history — every open->close cycle reconstructed from on-chain fills, with entry/exit VWAP, peak size, hold duration, realized PnL, fees, fill count, and liquidation status. Richer than closed-positions: each row is a full position lifecycle. 90-day rolling window; spot (@-prefixed) excluded by default. Use for deep position-level due diligence and timing analysis.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1191,6 +1328,7 @@ TIPS:
                 limit: z.number().min(1).max(200).default(50).describe("Number of lifecycles to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, address, coin, status, includeSpot, includeCensored, limit, offset }) => {
             const params = {
                 status, includeSpot: String(includeSpot), includeCensored: String(includeCensored),
@@ -1203,6 +1341,7 @@ TIPS:
     // ─── Lifecycle Summary (per wallet) ───────────────────────
     if (shouldRegister("pulse_trader_lifecycle_summary"))
         server.registerTool("pulse_trader_lifecycle_summary", {
+            title: "Trader Lifecycle Summary",
             description: "Get a wallet's aggregate position-lifecycle stats: total/closed/open count, wins, losses, liquidations, win rate, total & avg PnL, biggest win/loss, avg/min/max hold duration, total fees, and unique coins traded. Same 90-day rolling window as pulse_trader_lifecycles. Use to size up a trader's position-level performance in one call.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1211,6 +1350,7 @@ TIPS:
                 includeSpot: z.boolean().default(false).describe("Include spot (@-prefixed) pairs. Default false."),
                 includeCensored: z.boolean().default(false).describe("Include censored lifecycles. Default false."),
             },
+            annotations,
         }, async ({ useToonFormat, address, coin, includeSpot, includeCensored }) => {
             const params = { includeSpot: String(includeSpot), includeCensored: String(includeCensored) };
             if (coin)
@@ -1220,20 +1360,24 @@ TIPS:
     // ─── Single Lifecycle by ID (+ composing fills) ───────────
     if (shouldRegister("pulse_lifecycle"))
         server.registerTool("pulse_lifecycle", {
+            title: "Position Lifecycle Details",
             description: "Look up one position lifecycle by its numeric ID, including every trade fill that composed it (timestamp, side, size, price, PnL, fee, tx hash) joined from the trades table within the open->close window. Use after pulse_trader_lifecycles to drill into exactly how a single position was built and unwound.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 id: z.number().int().min(1).describe("Lifecycle ID (from pulse_trader_lifecycles)."),
             },
+            annotations,
         }, async ({ useToonFormat, id }) => toolResult(await callAPI(useToonFormat, `/pulse/lifecycle/${id}`)));
     // ─── Trader Demo / Quick Brief ───────────────────────────
     if (shouldRegister("pulse_trader_demo"))
         server.registerTool("pulse_trader_demo", {
+            title: "Trader Briefing",
             description: "Get a fast wallet briefing for demos and agent triage: lifecycle summary plus recent top wins and losses. Use when the user wants a quick read on a trader before deciding whether to run deeper lifecycle, drawdown, or token-level analysis.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
             },
+            annotations,
         }, async ({ useToonFormat, address }) => toolResult(await callAPI(useToonFormat, `/pulse/trader/${address}/demo`)));
     // ══════════════════════════════════════════════════════════
     // v0.8.0 — EXECUTION QUALITY (MAE/MFE, perp-only)
@@ -1241,6 +1385,7 @@ TIPS:
     // ─── Wallet Drawdown Curve ────────────────────────────────
     if (shouldRegister("pulse_wallet_drawdown_curve"))
         server.registerTool("pulse_wallet_drawdown_curve", {
+            title: "Wallet Drawdown Curve",
             description: "Get a wallet's per-position drawdown (MAE) and run-up (MFE) curve: for each closed perp lifecycle, the worst adverse price excursion and best favorable excursion vs entry, as percentages. Use to judge a trader's pain tolerance and exit timing — 'how far underwater did they go before it worked?'. Perp-only (spot has no MAE).",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1248,10 +1393,12 @@ TIPS:
                 limit: z.number().min(1).max(500).default(100).describe("Number of positions to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, address, limit, offset }) => toolResult(await callAPI(useToonFormat, `/pulse/wallet-drawdown-curve/${address}`, { limit: String(limit), offset: String(offset) })));
     // ─── Max-Pain Events ──────────────────────────────────────
     if (shouldRegister("pulse_max_pain_events"))
         server.registerTool("pulse_max_pain_events", {
+            title: "Max Pain Events",
             description: "Find the biggest survived drawdowns: closed perp positions that went deeply underwater (high MAE) yet still closed in profit. These are 'diamond hands' winners that nearly blew up first. Returns the position, entry/MAE/exit prices, realized PnL, and max drawdown %. Filtered to material positions (minPnl) with bounded drawdowns.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1260,6 +1407,7 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of events to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, minDrawdownPct, minPnl, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/max-pain-events", {
             minDrawdownPct: String(minDrawdownPct), minPnl: String(minPnl),
             limit: String(limit), offset: String(offset),
@@ -1267,6 +1415,7 @@ TIPS:
     // ─── Perfect Exits ────────────────────────────────────────
     if (shouldRegister("pulse_perfect_exits"))
         server.registerTool("pulse_perfect_exits", {
+            title: "Perfect Exits",
             description: "Find positions that exited near the top: closed perp positions whose exit captured a high fraction of the maximum favorable excursion (MFE). These are well-timed exits. Returns the position, entry/exit/MFE prices, realized PnL, and MFE capture % (capped at 100). Filtered to material positions (minPnl) with a real favorable move.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1275,6 +1424,7 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of exits to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, minCapturePct, minPnl, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/perfect-exits", {
             minCapturePct: String(minCapturePct), minPnl: String(minPnl),
             limit: String(limit), offset: String(offset),
@@ -1282,6 +1432,7 @@ TIPS:
     // ─── Backstop Events (catastrophic liquidations) ──────────
     if (shouldRegister("pulse_backstop_events"))
         server.registerTool("pulse_backstop_events", {
+            title: "Backstop Liquidation Events",
             description: "Get the most catastrophic individual liquidations across Hyperliquid — large forced closes ranked by loss. Returns wallet, coin, side, entry VWAP, peak size, realized PnL, penalty fee, liquidation method, and liquidator address. Use for 'who got wrecked hardest?' and post-mortem analysis. Default returns $10k+ losses.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1290,6 +1441,7 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of events to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, method, maxRealizedPnl, limit, offset }) => {
             const params = { maxRealizedPnl: String(maxRealizedPnl), limit: String(limit), offset: String(offset) };
             if (method)
@@ -1302,6 +1454,7 @@ TIPS:
     // ─── Survivors ────────────────────────────────────────────
     if (shouldRegister("pulse_survivors"))
         server.registerTool("pulse_survivors", {
+            title: "Survivors (Comeback Traders)",
             description: "Find comeback traders: wallets whose cumulative realized PnL hit a deep trough and then climbed back to positive. Returns wallet, trough depth, current cumulative PnL, and recovery amount. Use for 'who blew up but recovered?'. Realized-PnL drawdown only.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1309,10 +1462,12 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, maxTrough, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/survivors", { maxTrough: String(maxTrough), limit: String(limit), offset: String(offset) })));
     // ─── Anti-Survivors ───────────────────────────────────────
     if (shouldRegister("pulse_anti_survivors"))
         server.registerTool("pulse_anti_survivors", {
+            title: "Anti-Survivors (Unrecovered Blow-Ups)",
             description: "Find wallets that blew up and never recovered — cumulative realized PnL hit a deep trough and is still underwater. Returns wallet, trough depth, and current cumulative PnL. Use for 'who got rekt and stayed rekt?'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1321,6 +1476,7 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, maxTrough, stillUnderwater, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/anti-survivors", {
             maxTrough: String(maxTrough), stillUnderwater: String(stillUnderwater),
             limit: String(limit), offset: String(offset),
@@ -1328,6 +1484,7 @@ TIPS:
     // ─── Persistent Winners ───────────────────────────────────
     if (shouldRegister("pulse_persistent_winners"))
         server.registerTool("pulse_persistent_winners", {
+            title: "Persistent Winners",
             description: "Find consistently profitable wallets: traders that were profitable in N+ distinct calendar months of the 90-day window. Returns wallet, profitable-month count, total PnL, and best-month PnL. Use for 'who is consistently good, not just lucky once?'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1335,10 +1492,12 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, minMonths, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/persistent-winners", { minMonths: String(minMonths), limit: String(limit), offset: String(offset) })));
     // ─── Capital Titans ───────────────────────────────────────
     if (shouldRegister("pulse_capital_titans"))
         server.registerTool("pulse_capital_titans", {
+            title: "Capital Titans",
             description: "Find the most fee-efficient traders: highest realized PnL per dollar of fees paid. Returns wallet, total PnL, total fees, PnL-per-fee-dollar ratio, and lifecycle count. Use for 'who extracts the most edge per dollar spent on fees?'. minPnl/minFees gates filter out noise.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1347,12 +1506,14 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, minPnl, minFees, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/capital-titans", {
             minPnl: String(minPnl), minFees: String(minFees), limit: String(limit), offset: String(offset),
         })));
     // ─── One-Month Wonders ────────────────────────────────────
     if (shouldRegister("pulse_one_month_wonders"))
         server.registerTool("pulse_one_month_wonders", {
+            title: "One-Month Wonders",
             description: "Find flash-in-the-pan traders: big winners in a single month who then gave it back. Returns wallet, best-month PnL, total PnL, giveback amount, active months, and profitable months. Use for 'who had one great month then faded?'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1360,10 +1521,12 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, minBestMonth, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/one-month-wonders", { minBestMonth: String(minBestMonth), limit: String(limit), offset: String(offset) })));
     // ─── Newcomer Whales ──────────────────────────────────────
     if (shouldRegister("pulse_newcomer_whales"))
         server.registerTool("pulse_newcomer_whales", {
+            title: "Newcomer Whales",
             description: "Find new big players: wallets whose first-ever lifecycle is recent but who have already moved large notional. Returns wallet, first-seen date, gross notional, total PnL, and lifecycle count. Use for 'who just showed up and is already trading big?'. Lower minNotional if no rows return at default.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1372,6 +1535,7 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, newcomerDays, minNotional, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/newcomer-whales", {
             newcomerDays: String(newcomerDays), minNotional: String(minNotional),
             limit: String(limit), offset: String(offset),
@@ -1379,6 +1543,7 @@ TIPS:
     // ─── Coin Kings ───────────────────────────────────────────
     if (shouldRegister("pulse_coin_kings"))
         server.registerTool("pulse_coin_kings", {
+            title: "Coin Kings",
             description: "Find the top earner(s) per coin within the window. perCoinRank=1 returns only the #1 earner ('king') of each coin; higher values return the top-N per coin. Returns coin, wallet, coin PnL, fees, lifecycle count, and rank. Use for 'who owns BTC?' / 'who is the best trader of each market?'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1386,20 +1551,24 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of rows to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, perCoinRank, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/coin-kings", { perCoinRank: String(perCoinRank), limit: String(limit), offset: String(offset) })));
     // ─── Top Liquidators ──────────────────────────────────────
     if (shouldRegister("pulse_top_liquidators"))
         server.registerTool("pulse_top_liquidators", {
+            title: "Top Liquidators",
             description: "Find wallets that profit by liquidating others' forced closes. Returns liquidator wallet, liquidations executed, distinct victims, distinct coins, total penalty collected, and total liquidation PnL. Use for 'who is the biggest backstop/liquidation player?'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/top-liquidators", { limit: String(limit), offset: String(offset) })));
     // ─── Lethal Coins ─────────────────────────────────────────
     if (shouldRegister("pulse_lethal_coins"))
         server.registerTool("pulse_lethal_coins", {
+            title: "Lethal Coins",
             description: "Find the most dangerous markets: coins with the highest per-lifecycle liquidation rate. Returns coin, total lifecycles, liquidations, liquidation %, and total penalty. Use for 'which coins blow people up most often?'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1407,6 +1576,7 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of coins to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, minLifecycles, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/lethal-coins", { minLifecycles: String(minLifecycles), limit: String(limit), offset: String(offset) })));
     // ══════════════════════════════════════════════════════════
     // v0.8.0 — MARKET STRUCTURE (aggregate lifecycle analytics)
@@ -1414,39 +1584,49 @@ TIPS:
     // ─── Coin Alpha Map ───────────────────────────────────────
     if (shouldRegister("pulse_coin_alpha_map"))
         server.registerTool("pulse_coin_alpha_map", {
+            title: "Coin Alpha Map",
             description: "Per-coin profit pools split into winners vs losers vs net. Returns coin, lifecycles, unique wallets, winners pool, losers pool, net PnL, winning/losing lifecycle counts, and total fees. Use for 'which coins are net wealth creators vs destroyers?'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 limit: z.number().min(1).max(500).default(100).describe("Number of coins to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, limit, offset }) => toolResult(await callAPI(useToonFormat, "/pulse/coin-alpha-map", { limit: String(limit), offset: String(offset) })));
     // ─── Hour Profitability ───────────────────────────────────
     if (shouldRegister("pulse_hour_profitability"))
         server.registerTool("pulse_hour_profitability", {
+            title: "Hourly Profitability",
             description: "Global PnL heatmap by UTC hour of position close. Returns, for each of the 24 hours, lifecycle count, total PnL, avg PnL, wins, and losses. Use for 'what time of day is most profitable to close?' / session-bias analysis.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/pulse/hour-profitability")));
     // ─── Market Concentration ─────────────────────────────────
     if (shouldRegister("pulse_market_concentration"))
         server.registerTool("pulse_market_concentration", {
+            title: "Market Concentration",
             description: "Power-law shape of trader profits: percentile bands (top 0.1%, 1%, 10%, ...) and each band's share of total profits. Returns band label, wallet count, band PnL, % of total profits, and rank range. Use for 'how concentrated is alpha — do the top 1% take everything?'.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/pulse/market-concentration")));
     // ─── Style Distribution ───────────────────────────────────
     if (shouldRegister("pulse_style_distribution"))
         server.registerTool("pulse_style_distribution", {
+            title: "Trading Style Distribution",
             description: "HFT vs swing vs holder PnL split, bucketed by lifecycle hold duration. Returns, per style bucket, lifecycle count, unique wallets, total PnL, avg PnL, and total fees. Use for 'do scalpers or swing traders make more money on Hyperliquid?'.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/pulse/style-distribution")));
     // ─── Compare Wallets ──────────────────────────────────────
     if (shouldRegister("pulse_compare"))
         server.registerTool("pulse_compare", {
+            title: "Compare Traders",
             description: "Side-by-side comparison of 2-5 wallets via their lifecycle summaries — win rate, total/avg PnL, hold duration, biggest win/loss, fees, liquidations. Use for head-to-head trader comparison ('who is the better trader, A or B?').",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 wallets: z.array(ethAddressSchema).min(2).max(5).describe("2 to 5 wallet addresses to compare."),
             },
+            annotations,
         }, async ({ useToonFormat, wallets }) => toolResult(await callAPI(useToonFormat, "/pulse/compare", { wallets: wallets.join(",") })));
     // ══════════════════════════════════════════════════════════
     // v0.8.0 — REFRESHED COHORTS (30-day rolling tier label)
@@ -1454,6 +1634,7 @@ TIPS:
     // ─── Recent-Cohort Positions ──────────────────────────────
     if (shouldRegister("pulse_cohort_recent_positions"))
         server.registerTool("pulse_cohort_recent_positions", {
+            title: "Recent-Tier Cohort Positions",
             description: "Live positions held by a cohort defined by its LAST-30-DAY tier (pnl_tier_recent / size_tier_recent), not lifetime tier. Surfaces what currently-printing wallets are positioned for right now — catches regime changes the all-time pulse_cohort_positions misses.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1461,10 +1642,12 @@ TIPS:
                 tier: tierSchema,
                 limit: z.number().min(1).max(500).default(50).describe("Number of positions to return."),
             },
+            annotations,
         }, async ({ useToonFormat, tierType, tier, limit }) => toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${normalizeTier(tier)}/positions`, { limit: String(limit) })));
     // ─── Recent-Cohort Trades ─────────────────────────────────
     if (shouldRegister("pulse_cohort_recent_trades"))
         server.registerTool("pulse_cohort_recent_trades", {
+            title: "Recent-Tier Cohort Trades",
             description: "Recent trades by a cohort defined by its LAST-30-DAY tier (pnl_tier_recent / size_tier_recent). Shows what currently-printing wallets have been trading in the window — real-time alpha weighted to who is hot NOW, not all-time.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1473,10 +1656,12 @@ TIPS:
                 since: sinceSchema.default("1h"),
                 limit: z.number().min(1).max(500).default(50).describe("Number of trades to return."),
             },
+            annotations,
         }, async ({ useToonFormat, tierType, tier, since, limit }) => toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${normalizeTier(tier)}/trades`, { since, limit: String(limit) })));
     // ─── Recent-Cohort Lifecycle Stats ────────────────────────
     if (shouldRegister("pulse_cohort_recent_lifecycle_stats"))
         server.registerTool("pulse_cohort_recent_lifecycle_stats", {
+            title: "Recent-Tier Cohort Lifecycle Stats",
             description: "Per-wallet lifecycle stats for a cohort defined by its LAST-30-DAY tier: lifecycles, wins, losses, liquidations, total PnL, fees, avg hold, biggest win/loss, plus the wallet's recent pnl/size tier labels. Use for position-level analysis of who is currently printing.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1485,10 +1670,12 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of wallets to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, tierType, tier, limit, offset }) => toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${normalizeTier(tier)}/lifecycle-stats`, { limit: String(limit), offset: String(offset) })));
     // ─── Recent-Cohort Top Positions ──────────────────────────
     if (shouldRegister("pulse_cohort_recent_top_positions"))
         server.registerTool("pulse_cohort_recent_top_positions", {
+            title: "Recent-Tier Cohort Top Positions",
             description: "Top closed position lifecycles by a cohort defined by its LAST-30-DAY tier: the biggest/most notable open->close cycles from currently-printing wallets, with entry/exit VWAP, hold duration, realized PnL, fees, and liquidation flag.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1497,74 +1684,93 @@ TIPS:
                 limit: z.number().min(1).max(500).default(50).describe("Number of positions to return."),
                 offset: z.number().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, tierType, tier, limit, offset }) => toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${normalizeTier(tier)}/top-positions`, { limit: String(limit), offset: String(offset) })));
     // ─── Recent-Cohort Alpha Concentration ────────────────────
     if (shouldRegister("pulse_cohort_recent_alpha_concentration"))
         server.registerTool("pulse_cohort_recent_alpha_concentration", {
+            title: "Recent-Tier Cohort Alpha Concentration",
             description: "How concentrated profit is WITHIN a recent-tier cohort: percentile bands of the cohort's wallets and each band's share of the cohort's total PnL. Returns band, wallet count, band PnL, % of tier PnL, and tier total wallets. Use for 'within the hot apex (Apex) cohort, do a few wallets carry everything?'.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 tierType: z.enum(["pnl", "size"]).describe("Tier category: 'pnl' for profit tiers, 'size' for volume tiers."),
                 tier: tierSchema,
             },
+            annotations,
         }, async ({ useToonFormat, tierType, tier }) => toolResult(await callAPI(useToonFormat, `/pulse/cohorts-recent/${tierType}/${normalizeTier(tier)}/alpha-concentration`)));
     // ─── My Plan (tier / limits introspection) [FREE] ─────────
     if (shouldRegister("pulse_my_plan"))
         server.registerTool("pulse_my_plan", {
-            description: "Show the current API key's plan: tier, rate limits (per-minute/daily/monthly), and a comparison of every tier's limits with an upgrade link. Call this when the user asks what plan they're on, when a request was rejected for tier or rate-limit reasons, or before recommending an upgrade. Live remaining-quota counts also arrive on every API response as X-RateLimit-* headers.",
+            title: "My Plan",
+            description: "Show the current API key's plan: tier, rate limits (per-minute/daily/monthly), and every tier's limits. Use when the user asks what plan they are on or after a tier/rate-limit rejection. Live remaining-quota counts also arrive on every API response as X-RateLimit-* headers.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/plan")));
     // ─── Entity Profile (owner-level view) [PRO] ──────────────
     if (shouldRegister("pulse_entity_profile"))
         server.registerTool("pulse_entity_profile", {
+            title: "Entity Profile",
             description: "Resolve ANY wallet to its owner entity: the master account, every named sub-account (and weaker 'linked' wallets), each member's open book, the COMBINED open positions across all of them, and a 'verified vs chain at block N' stamp. Answers 'who owns this wallet?' and 'what is this trader's real total book across all their accounts?' — sub-accounts trade independently on Hyperliquid, so per-wallet views undercount every multi-account trader. Note: vaults appear as named sub-accounts of their creator. Requires Pro tier.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: z.string().regex(/^0x[a-fA-F0-9]{40}$/).describe("Any wallet address — master, sub-account, or unknown; it resolves to the owning entity either way."),
             },
+            annotations,
         }, async ({ useToonFormat, address }) => toolResult(await callAPI(useToonFormat, `/entity/${address}`)));
     // ─── Entity Leaderboard (deduped by owner) [PRO] ──────────
     if (shouldRegister("pulse_entity_leaderboard"))
         server.registerTool("pulse_entity_leaderboard", {
+            title: "Entity Leaderboard",
             description: "Top entities (owners, NOT wallets) ranked by combined gross open entry notional across all their sub-accounts. This is the deduplicated view a wallet leaderboard cannot give: a fund running 35 sub-accounts appears as ONE entity with its true combined book. System/protocol accounts are excluded. Each row: entity master address, wallet count, open position count, gross entry notional. Requires Pro tier.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 limit: z.number().int().min(1).max(100).default(25).describe("Rows to return (max 100)."),
                 offset: z.number().int().min(0).max(199).default(0).describe("Pagination offset (window capped at 200)."),
             },
+            annotations,
         }, async ({ useToonFormat, limit, offset }) => toolResult(await callAPI(useToonFormat, "/entities/leaderboard", { limit: String(limit), offset: String(offset) })));
     // ─── Exchange Volume by Dex [FREE] ────────────────────────
     if (shouldRegister("pulse_exchange_volume"))
         server.registerTool("pulse_exchange_volume", {
-            description: "24h trading volume for the WHOLE exchange, split by dex: native Hyperliquid ('hl') plus every builder dex (xyz, hyna, ...), with per-dex match counts and distinct traders. Use for 'how much volume does Hyperliquid do?' — and note builder dexes are ~43% of it, which most public trackers' headline numbers omit. Aggregates cached up to 120s.",
+            title: "Exchange Volume",
+            description: "24h trading volume for the WHOLE exchange, split by dex: native Hyperliquid ('hl') plus every builder dex (xyz, hyna, ...), with per-dex match counts and distinct traders. Use for 'how much volume does Hyperliquid do?' — and note builder dexes are ~43% of it. Aggregates cached up to 120s.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/exchange/volume")));
     // ─── Exchange Open Interest by Dex [FREE] ─────────────────
     if (shouldRegister("pulse_exchange_oi"))
         server.registerTool("pulse_exchange_oi", {
+            title: "Exchange Open Interest",
             description: "Current open interest for the whole exchange by dex, with long/short notional split. Gross both-sides convention (matches HyperTracker/hl.eco headlines; halve for one-sided OI). Use for 'what's the OI on Hyperliquid / on xyz?', market-size questions, and long-vs-short balance checks. Cached up to 120s.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/exchange/oi")));
     // ─── Active Traders 24h [FREE] ────────────────────────────
     if (shouldRegister("pulse_active_traders"))
         server.registerTool("pulse_active_traders", {
+            title: "Active Traders",
             description: "Distinct wallets that filled at least one perp trade in the last 24h, exchange-wide, plus total match count. The 'daily active traders' headline number. Cached up to 120s.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/exchange/active-traders")));
     // ─── Exchange Positions & 24h Flow [FREE] ─────────────────
     if (shouldRegister("pulse_exchange_positions"))
         server.registerTool("pulse_exchange_positions", {
-            description: "Exchange-wide position vitals by dex: open positions and wallets holding them, plus the 24h flow — positions closed, liquidations, and TOTAL REALIZED PNL across the whole exchange (gross profits/losses split). Answers 'how many positions are open on Hyperliquid?' and 'did traders collectively make or lose money today?' — a headline no public tracker publishes. Cached up to 120s.",
+            title: "Exchange Positions",
+            description: "Exchange-wide position vitals by dex: open positions and wallets holding them, plus the 24h flow — positions closed, liquidations, and TOTAL REALIZED PNL across the whole exchange (gross profits/losses split). Answers 'how many positions are open on Hyperliquid?' and 'did traders collectively make or lose money today?' Cached up to 120s.",
             inputSchema: { useToonFormat: useToonFormatSchema },
+            annotations,
         }, async ({ useToonFormat }) => toolResult(await callAPI(useToonFormat, "/exchange/positions")));
     // ─── Daily PnL Leaders [STARTER] ──────────────────────────
     if (shouldRegister("pulse_pnl_leaders"))
         server.registerTool("pulse_pnl_leaders", {
+            title: "PnL Leaders",
             description: "Today's biggest realized winners AND losers: wallets ranked by summed realized PnL on positions CLOSED in the last 24h, with position counts and liquidation flags. Realized-on-the-day — different from the portfolio leaderboards (which rank account value over longer windows). Use for 'who made/lost the most money today?'. Requires Starter tier or higher.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 limit: z.number().int().min(1).max(100).default(20).describe("Winners and losers each capped at this count."),
             },
+            annotations,
         }, async ({ useToonFormat, limit }) => toolResult(await callAPI(useToonFormat, "/exchange/pnl-leaders", { limit: String(limit) })));
     // ══════════════════════════════════════════════════════════
     // BUILDER ANALYTICS (new in 0.11) — 8 tools
@@ -1572,6 +1778,7 @@ TIPS:
     // ─── Builder Revenue Leaderboard [STARTER] ────────────────
     if (shouldRegister("builder_leaderboard"))
         server.registerTool("builder_leaderboard", {
+            title: "Builder Leaderboard",
             description: "Builders (HIP-3 dexes, frontends, bots) ranked by exact revenue from Hyperliquid's on-chain cumulative builder-fee ledger over the requested period. Each row carries join-attributed fill volume, distinct users, and fill counts — plus the same metrics for the immediately preceding window for deltas — the builder's most common requested fee rate over the last 7d of orders (feeTenthsBp, tenths of a basis point), and builderName from a curated registry (omitted when unknown). Attributed metrics slightly undercount versus ledger revenue because trigger-order fills (stop/TP) are not yet attributed — see the response's dataNotes; the 'verified' stamp gives the ledger block this data was reconciled against. Use for 'which builders earn the most?' or 'is builder X growing?'. Requires Starter tier or higher.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1579,10 +1786,12 @@ TIPS:
                 limit: z.number().int().min(1).max(100).default(50).describe("Rows to return (max 100)."),
                 offset: z.number().int().min(0).max(1000).default(0).describe("Pagination offset (window capped at 1000)."),
             },
+            annotations,
         }, async ({ useToonFormat, period, limit, offset }) => toolResult(await callAPI(useToonFormat, "/builders/leaderboard", { period, limit: String(limit), offset: String(offset) })));
     // ─── Builder Profile [STARTER] ────────────────────────────
     if (shouldRegister("builder_profile"))
         server.registerTool("builder_profile", {
+            title: "Builder Profile",
             description: "Single-builder overview for a 0x-hex builder address: exact revenue from Hyperliquid's on-chain builder-fee ledger over the period (day/week/month), first/last fee accrual timestamps, distinct fee tokens, most common requested fee rate over the last 7d of orders (feeTenthsBp, tenths of a basis point), a daily attributed series (fees/volume/users/fills) with the biggest day highlighted, top coins by attributed volume, and how many of the period's attributed wallets are all-time profitable. Attributed metrics slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes); builderName comes from a curated registry, omitted when unknown. Returns 404 for addresses with no revenue in the fee ledger. Use for 'how is builder X doing?' or 'what do people trade on frontend Y?'. Requires Starter tier or higher.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1590,10 +1799,12 @@ TIPS:
                 period: builderPeriodSchema.default("month").describe("Aggregation window: day, week, or month."),
                 topCoins: z.number().int().min(1).max(50).default(10).describe("How many top coins (by attributed volume) to return (max 50)."),
             },
+            annotations,
         }, async ({ useToonFormat, builder, period, topCoins }) => toolResult(await callAPI(useToonFormat, `/builders/${builder}/profile`, { period, topCoins: String(topCoins) })));
     // ─── Builder's Attributed Traders [PRO] ───────────────────
     if (shouldRegister("builder_traders"))
         server.registerTool("builder_traders", {
+            title: "Builder Traders",
             description: "Wallets that traded via a builder (0x-hex address) in the window, sortable by builder fees paid, volume, or realized PnL. Each row: wallet, realized PnL on its attributed fills, builderFeesUsd, volumeUsd, fills, latest equity (0 if untracked), and the wallet's ALL-TIME exchange-wide cohort tiers (pnlTier/sizeTier, emitted as legacy slugs like smart_money/whale; null if untracked) — lifetime labels, unlike the 30d-rolling tiers the pulse cohort tools classify by, so memberships can differ. Attributed fills slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes). Use for 'who are builder X's biggest fee payers?' or 'are smart-money wallets using this frontend?'. Requires Pro tier.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1603,10 +1814,12 @@ TIPS:
                 limit: z.number().int().min(1).max(500).default(50).describe("Rows to return (max 500)."),
                 offset: z.number().int().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, builder, period, sort, limit, offset }) => toolResult(await callAPI(useToonFormat, `/builders/${builder}/traders`, { period, sort, limit: String(limit), offset: String(offset) })));
     // ─── Builder Attributed Fills [PRO] ───────────────────────
     if (shouldRegister("builder_fills"))
         server.registerTool("builder_fills", {
+            title: "Builder Fills",
             description: "Individual fills attributed to a builder (0x-hex address) within a lookback window (since, e.g. '6h' or '7d', clamped to 90d), optionally filtered to one exact coin (BTC, xyz:GOLD, @123 spot, #10010 HIP-4 outcome) or one wallet. Each fill: time, wallet, coin, marketType (perp|spot|hip4), side (BUY|SELL), price, size, USD volume, realized PnL, builderFeeUsd, tid, and the order id it attributes to (null if untracked). Trigger-order (stop/TP) fills are not yet attributed, so this feed slightly undercounts versus ledger revenue — see the response's dataNotes. Use for 'show me the flow going through frontend X right now' or auditing one wallet's activity via a builder. Requires Pro tier.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
@@ -1617,6 +1830,7 @@ TIPS:
                 limit: z.number().int().min(1).max(500).default(50).describe("Rows to return (max 500)."),
                 offset: z.number().int().min(0).default(0).describe("Pagination offset."),
             },
+            annotations,
         }, async ({ useToonFormat, builder, since, coin, address, limit, offset }) => {
             const params = { since, limit: String(limit), offset: String(offset) };
             if (coin)
@@ -1628,41 +1842,94 @@ TIPS:
     // ─── Builder User Cohort Composition [PRO] ────────────────
     if (shouldRegister("builder_cohorts"))
         server.registerTool("builder_cohorts", {
+            title: "Builder Cohorts",
             description: "Cohort composition of a builder's attributed users over the period (day/week/month): split by all-time exchange-wide profitability tier (pnlTiers) and size tier (sizeTiers), largest cohort first, each with users, share of totalUsers, builder fees paid, attributed volume, realized PnL, and fills. Tiers are LIFETIME labels emitted as legacy slugs (money_printer..giga_rekt / leviathan..shrimp) — not the 30d-rolling tiers the pulse cohort tools use — and wallets missing from the rollup appear under 'untracked' so per-tier user counts always sum to totalUsers. Attribution slightly undercounts versus ledger revenue (trigger-order fills — see the response's dataNotes). Use for 'is builder X's user base smart money or exit liquidity?' or 'do whales or shrimp pay most of its fees?'. Requires Pro tier.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 builder: builderAddressSchema,
                 period: builderPeriodSchema.default("week").describe("Attribution window: day, week, or month."),
             },
+            annotations,
         }, async ({ useToonFormat, builder, period }) => toolResult(await callAPI(useToonFormat, `/builders/${builder}/cohorts`, { period })));
     // ─── Builder Monthly Retention Cohorts [PRO] ──────────────
     if (shouldRegister("builder_retention"))
         server.registerTool("builder_retention", {
+            title: "Builder Retention",
             description: "Monthly retention matrix for a builder's users (takes only the 0x-hex builder address — no other parameters): wallets are cohorted by the calendar month (YYYY-MM, UTC) of their first builder-fee order via this builder, and each cohort's activeWallets[k] counts wallets still active k months later, where 'active' = placed at least one builder-fee order that month (index 0 = the cohort month itself = newWallets). Covers the last 12 calendar months, oldest cohort first. Measured on the ORDERS plane — the order need not fill — so counts can exceed the attributed-fill user counts on builder_cohorts/builder_overlap; see the response's dataNotes for the attribution caveat. Use for 'does builder X retain users month over month, or churn them?'. Requires Pro tier.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 builder: builderAddressSchema,
             },
+            annotations,
         }, async ({ useToonFormat, builder }) => toolResult(await callAPI(useToonFormat, `/builders/${builder}/retention`)));
     // ─── Builder Audience Overlap [PRO] ───────────────────────
     if (shouldRegister("builder_overlap"))
         server.registerTool("builder_overlap", {
+            title: "Builder Overlap",
             description: "The top 10 OTHER builders this builder's active users also traded through in the period (day/week/month), ranked by shared users — i.e. which other frontends/bots/dexes this builder's audience also uses. Returns activeUsers (the share denominator: distinct wallets with attributed fills via this builder) and per row: the other builder's 0x address, curated builderName (omitted when unknown), sharedUsers, share of this builder's active users, and feesUsd those shared users paid to the OTHER builder in the period. Based on attributed fills, which slightly undercount (trigger-order fills — see the response's dataNotes). Use for 'who is builder X's closest competitor?' or 'where else does its audience trade?'. Requires Pro tier.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 builder: builderAddressSchema,
                 period: builderPeriodSchema.default("week").describe("Attribution window: day, week, or month."),
             },
+            annotations,
         }, async ({ useToonFormat, builder, period }) => toolResult(await callAPI(useToonFormat, `/builders/${builder}/overlap`, { period })));
     // ─── Builders a Wallet Trades Through [STARTER] ───────────
     if (shouldRegister("trader_builders"))
         server.registerTool("trader_builders", {
+            title: "Trader Builders",
             description: "Every builder (frontend, bot, HIP-3 dex) a wallet (0x-hex address) had attributed fills through within a lookback window (since, default '30d', clamped to 90d), ordered by builder fees paid descending. Each row: builder address, curated builderName (omitted when unknown), fills, builderFeesUsd, volumeUsd, and first/last attributed-fill timestamps within the window. Attribution slightly undercounts (trigger-order stop/TP fills not yet attributed — see the response's dataNotes). The inverse of builder_traders: wallet → builders instead of builder → wallets. Use for 'which apps does this trader use?' or 'how much has wallet X paid frontend Y in fees?'. Requires Starter tier or higher.",
             inputSchema: {
                 useToonFormat: useToonFormatSchema,
                 address: ethAddressSchema,
                 since: sinceSchema.default("30d").describe("Lookback window like '30m', '6h', '30d' (clamped to 90d)."),
             },
+            annotations,
         }, async ({ useToonFormat, address, since }) => toolResult(await callAPI(useToonFormat, `/trader/${address}/builders`, { since })));
+    // ─── Builder User Journey Economics [PRO] ──────────────────
+    if (shouldRegister("builder_journey"))
+        server.registerTool("builder_journey", {
+            title: "Builder Journey",
+            description: "How fast and how unevenly a builder monetizes the wallets it acquires (takes only the 0x-hex builder address — no other parameters): users and minFills, avgRevenueUsd and medianRevenueUsd of lifetime attributed builder fees per qualifying wallet, concentration (avg/median — 1 = evenly spread, higher = whale-skewed, 0 when the median is 0), daysToPeak, daysToHalfRevenue and daysToThreeQuartersRevenue as {avgDays, medianDays} measured from each wallet's first attributed fill to its single highest-revenue day and to 50% and 75% of its lifetime fees, and peakDayDistribution bucketing those wallets into under7d, from7To30d and over30d. NOT the lifetime user base builder_lifecycle covers: the universe is the TRAILING-YEAR acquisition cohort — wallets whose first builder-fee order via this builder fell within the last 365 days, with at least minFills (fixed at 3) lifetime attributed fills — computed per wallet then aggregated, so young cohorts' truncated series bias the day counts low; see the response's dataNotes. Use for 'how fast and how unevenly does builder X monetize a new user?'. Requires Pro tier. The first call for a builder can take up to ~90 seconds while the API computes it; the result is then cached, so repeat the call if it times out.",
+            inputSchema: {
+                useToonFormat: useToonFormatSchema,
+                builder: builderAddressSchema,
+            },
+            annotations,
+        }, async ({ useToonFormat, builder }) => toolResult(await callAPI(useToonFormat, `/builders/${builder}/journey`, undefined, SLOW_BUILDER_CALL)));
+    // ─── Builder User Lifecycle [PRO] ──────────────────────────
+    if (shouldRegister("builder_lifecycle"))
+        server.registerTool("builder_lifecycle", {
+            title: "Builder Lifecycle",
+            description: "Where every wallet that ever traded via this builder stands today (takes only the 0x-hex builder address — no other parameters): totalUsers split into five MUTUALLY EXCLUSIVE statuses that sum back to it, each {users, share} — active (attributed fill via THIS builder within 7d), cooling (within 30d but not 7d), switched (no fill here in 30d but at least one via a DIFFERENT builder in that window, detectable only with all-builder attribution), dormant (no fill via any builder in 30d, last fill here within 90d) and movedOn (no fill anywhere in 30d and none here in 90d) — plus trueRetention ((active+cooling)/totalUsers), churn ((dormant+movedOn)/totalUsers) and competitiveLoss (switched/totalUsers), which sum to 1, and competitiveLossFeesUsd, the builder fees those switched wallets paid to OTHER builders in the last 30d. LIFETIME universe on the ORDERS plane — every wallet that ever placed a builder-fee order via this builder, including ones whose orders never filled (they land in movedOn, or in switched if they filled via a DIFFERENT builder in the last 30d) — with only the status test reading recent attributed fills, so this is one snapshot of the whole historical user base rather than builder_retention's per-cohort monthly grid; see the response's dataNotes. Use for 'how many of builder X's users are still active, and how many did a rival take?'. Requires Pro tier.",
+            inputSchema: {
+                useToonFormat: useToonFormatSchema,
+                builder: builderAddressSchema,
+            },
+            annotations,
+        }, async ({ useToonFormat, builder }) => toolResult(await callAPI(useToonFormat, `/builders/${builder}/lifecycle`)));
+    // ─── Builder Activity Heatmap [PRO] ────────────────────────
+    if (shouldRegister("builder_heatmap"))
+        server.registerTool("builder_heatmap", {
+            title: "Builder Heatmap",
+            description: "When a builder's attributed flow actually trades (takes only the 0x-hex builder address — no other parameters): a 7x24 weekday-by-hour grid as days[], always 7 entries Sunday first with weekday 0 = Sunday through 6 = Saturday, each carrying hours[], always 24 entries with hour 0 first, and every cell reporting hour, volumeUsd, feesUsd and fills totalled over the whole window; zero-activity cells are zero-valued, never omitted. No period parameter and no per-week averaging — windowDays is fixed at 84, the trailing 12 weeks, so every weekday is sampled exactly 12 times — and both weekday and hour are UTC, never local time. Attributed fills slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes). Use for 'what hours does builder X's volume peak, is it bot-like around the clock or human trading hours, and when is it safe to ship?'. Requires Pro tier. The first call for a builder can take up to ~90 seconds while the API computes it; the result is then cached, so repeat the call if it times out.",
+            inputSchema: {
+                useToonFormat: useToonFormatSchema,
+                builder: builderAddressSchema,
+            },
+            annotations,
+        }, async ({ useToonFormat, builder }) => toolResult(await callAPI(useToonFormat, `/builders/${builder}/heatmap`, undefined, SLOW_BUILDER_CALL)));
+    // ─── Builder Order Intent [PRO] ────────────────────────────
+    if (shouldRegister("builder_orders"))
+        server.registerTool("builder_orders", {
+            title: "Builder Orders",
+            description: "What this builder's users INTEND at placement time, before anything fills (0x-hex builder address plus a day/week/month period): totalIntents — non-trigger order intents plus still-PENDING stop/TP placements, the actions denominator — an actions[] mix of {actionType, orders, share}, largest first except the 'trigger' pseudo-type which is appended last, over 'order' (plain placements), 'batchModify' (modify intents on an existing order) and 'trigger' (pending stop/TP placements), a tifs[] time-in-force mix of {tif, orders, share} over non-trigger intents ('unknown' covers market orders and older rows), reduceOnlyShare, a trigger breakdown (total, takeProfit, stopLoss, triggerMarket, triggerLimit, positionTpsl, standaloneTpsl, resolved, pending) and fillConversion {orders, filledOrders, share} — the share of non-trigger intents whose own oid took at least one attributed fill. Measured on the PLACEMENT plane, not the fill plane behind builder_fills and builder_traders, so orders that never filled still count; trigger placement history begins 2026-03-24, and a resolved placement is excluded from totalIntents and the 'trigger' action because it already surfaces as a plain 'order' row, while the trigger breakdown covers both statuses — see the response's dataNotes. Use for 'do builder X's users place stops and take-profits, and how much of their order flow actually fills?'. Requires Pro tier.",
+            inputSchema: {
+                useToonFormat: useToonFormatSchema,
+                builder: builderAddressSchema,
+                period: builderPeriodSchema.default("week").describe("Placement window: day, week, or month."),
+            },
+            annotations,
+        }, async ({ useToonFormat, builder, period }) => toolResult(await callAPI(useToonFormat, `/builders/${builder}/orders`, { period })));
     return server;
 }
