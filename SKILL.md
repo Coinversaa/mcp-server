@@ -1,7 +1,7 @@
 ---
 name: coinversaa-pulse
-description: "Read-only crypto intelligence for AI agents. 82 API-key-authenticated tools for Hyperliquid trader analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, behavioral cohorts, HIP-4 outcome contracts, outcome/perp position context, syncer-backed risk data, live market data, builder dex markets, commodities, stocks, indices, cross-market asset taxonomy, liquidation heatmaps, official per-dex OI, and whale tracking across the full Hyperliquid wallet universe. This skill does not trade, sign transactions, move funds, request private keys, custody assets, or require wallet approvals. Call pulse_global_stats for live coverage totals."
-version: 0.8.0
+description: "Read-only crypto intelligence for AI agents. 103 tools (OAuth 2.1 on the hosted endpoint, API key for local stdio) for Hyperliquid trader analytics, builder-fee revenue analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, behavioral cohorts, HIP-4 outcome contracts, outcome/perp position context, syncer-backed risk data, live market data, builder dex markets, commodities, stocks, indices, cross-market asset taxonomy, liquidation heatmaps, official per-dex OI, and whale tracking across the full Hyperliquid wallet universe. This skill does not trade, sign transactions, move funds, request private keys, custody assets, or require wallet approvals. Call pulse_global_stats for live coverage totals."
+version: 0.11.1
 author: Coinversa <chat@coinversaa.ai>
 homepage: https://coinversa.ai
 repository: https://github.com/coinversaa/mcp-server
@@ -22,7 +22,7 @@ tags:
   - mcp
 env:
   COINVERSAA_API_KEY:
-    description: "Your Coinversa API key (starts with cvsa_). Required for every tool. Get one at https://coinversa.ai/developers."
+    description: "Your Coinversa API key (starts with cvsa_). Required by the local stdio server for every tool. The hosted endpoint https://mcp.coinversa.ai/mcp uses OAuth 2.1 instead and needs no env var. Get a key at https://developers.coinversa.ai/keys."
     required: true
   COINVERSAA_API_URL:
     description: "API base URL. Defaults to https://api.coinversa.ai."
@@ -93,81 +93,61 @@ Do not submit private, sensitive, or nonpublic information unless you are comfor
 
 Coinversa Pulse does not require private keys, seed phrases, wallet signatures, exchange credentials, or Hyperliquid account approvals.
 
-For more details, review Coinversa's website, API documentation, and privacy terms.
+The hosted remote server (`https://mcp.coinversa.ai/mcp`) is a stateless bridge to the Coinversa API. It stores OAuth client registrations, SHA-256-hashed access/refresh tokens, and the key grant behind each token (a key id when you connected through the developer portal, or the pasted key encrypted at rest with AES-256-GCM). It does not store conversation content, and it does not persist or log tool arguments or results beyond the request in flight.
+
+Policies: [coinversa.ai/privacy](https://coinversa.ai/privacy) and [coinversa.ai/terms](https://coinversa.ai/terms). Support: [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
 
 ---
 
 ## Setup
 
-An API key is required for every tool.
+An API key is required for every tool. There is no keyless tier.
 
-Get a key at [coinversa.ai/developers](https://coinversa.ai/developers).
+The canonical client guide is [docs.coinversa.ai/mcp/setup](https://docs.coinversa.ai/mcp/setup); the snippets below mirror it.
 
-You can connect in two ways:
+| Method | Where | Auth | Best for |
+|--------|-------|------|----------|
+| Hosted Remote MCP (recommended) | `https://mcp.coinversa.ai/mcp` | OAuth 2.1 in the browser | Claude.ai, Claude Desktop, Claude Code, Cursor, ChatGPT, Perplexity, any Streamable HTTP client |
+| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.11.1` | `COINVERSAA_API_KEY` env var | Codex and other stdio-only clients, development |
 
-| Method | Endpoint / command | Best for |
-|--------|--------------------|----------|
-| Hosted Remote MCP | `https://mcp.coinversa.ai/mcp` | Remote MCP clients and custom connectors that support Streamable HTTP |
-| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.8.0` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
-
-Remote MCP clients should send the Coinversa key as either:
-
-```text
-Authorization: Bearer cvsa_...
-X-API-Key: cvsa_...
-```
-
-### Hosted Remote MCP
-
-Use this URL for remote MCP clients:
+### Hosted Remote MCP (OAuth 2.1)
 
 ```text
 https://mcp.coinversa.ai/mcp
 ```
 
-The hosted endpoint uses Streamable HTTP. MCP requests without a Coinversa API key are rejected.
+Streamable HTTP, stateless (`POST /mcp`). Authentication is OAuth 2.1 with PKCE and dynamic client registration only — paste the URL, leave auth/header fields empty, and the client opens a Coinversa authorization page. There you sign in (or sign up; new accounts get 14 days of Pro) and pick a key, or paste an existing `cvsa_` key, then click **Authorize**. API keys sent in HTTP headers are not accepted by the hosted endpoint.
 
-### Local stdio MCP
+#### Claude.ai (web)
 
-Use `npx` when the MCP client runs local stdio servers.
+Open [claude.ai/customize/connectors?modal=add-custom-connector](https://claude.ai/customize/connectors?modal=add-custom-connector), set **Name** `Coinversa` and **URL** `https://mcp.coinversa.ai/mcp`, leave the auth fields empty, then connect and authorize in the browser.
 
 #### Claude Desktop
 
-Edit:
-
-```text
-~/Library/Application Support/Claude/claude_desktop_config.json
-```
-
-Add:
+Claude Desktop is stdio-only, so use the `mcp-remote` shim. Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `%APPDATA%\Claude\claude_desktop_config.json` (Windows), or `~/.config/Claude/claude_desktop_config.json` (Linux):
 
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
+    "coinversa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
-      "env": {
-        "COINVERSAA_API_KEY": "cvsa_your_key_here"
-      }
+      "args": ["-y", "mcp-remote", "https://mcp.coinversa.ai/mcp"]
     }
   }
 }
 ```
 
+Fully quit and reopen Claude Desktop; authorize in the browser window that opens.
+
 #### Cursor
 
-Add to `.cursor/mcp.json`:
+Add to `~/.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
-      "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.8.0"],
-      "env": {
-        "COINVERSAA_API_KEY": "cvsa_your_key_here"
-      }
+    "coinversa": {
+      "url": "https://mcp.coinversa.ai/mcp"
     }
   }
 }
@@ -176,9 +156,34 @@ Add to `.cursor/mcp.json`:
 #### Claude Code
 
 ```bash
-claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@0.8.0
-export COINVERSAA_API_KEY="cvsa_your_key_here"
+claude mcp add --transport http coinversa https://mcp.coinversa.ai/mcp
 ```
+
+Then run `/mcp` and authenticate `coinversa`.
+
+#### ChatGPT, Perplexity, other remote clients
+
+Add a custom connector with URL `https://mcp.coinversa.ai/mcp` and no headers.
+
+### Local stdio MCP (API key)
+
+For stdio-only clients, or when you prefer to hold the key yourself. Get a key at [developers.coinversa.ai/keys](https://developers.coinversa.ai/keys).
+
+```json
+{
+  "mcpServers": {
+    "coinversa": {
+      "command": "npx",
+      "args": ["-y", "@coinversaa/mcp-server@0.11.1"],
+      "env": {
+        "COINVERSAA_API_KEY": "cvsa_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Shell equivalent: `COINVERSAA_API_KEY=cvsa_... npx -y @coinversaa/mcp-server@0.11.1`
 
 #### OpenClaw
 
@@ -315,13 +320,36 @@ Use HIP-4 tools when users ask about outcomes, prediction markets, questions, se
 
 ---
 
+## Builder Analytics Tools
+
+Builders (frontends, bots, HIP-3 dexes) charge per-order builder fees on Hyperliquid. Revenue figures are exact, from Hyperliquid's on-chain cumulative builder-fee ledger; volume/user/fill detail comes from order-fill attribution and slightly undercounts because trigger-order (stop/TP) fills are not yet attributed — each response carries a `dataNotes` explanation and a `verified` ledger-block stamp. `builderName` comes from a curated registry and is omitted when unknown. Tier labels on `builder_traders` / `builder_cohorts` are ALL-TIME exchange-wide legacy slugs, not the 30d-rolling pulse cohort tiers.
+
+| Tool | Tier | Inputs | Backend route | What it returns / when to use |
+|------|------|--------|---------------|-------------------------------|
+| `builder_leaderboard` | Starter+ | `period` day/week/month default week, `limit` 1-100 default 50, `offset` 0-1000 default 0 | `GET /builders/leaderboard` | Builders ranked by exact ledger revenue, with attributed volume/users/fills, prev-window deltas, and the most common requested fee rate (`feeTenthsBp`). "Which builders earn the most?" |
+| `builder_profile` | Starter+ | `builder` 0x-hex, `period` default month, `topCoins` 1-50 default 10 | `GET /builders/{builder}/profile` | One builder: ledger revenue, first/last fee accrual, fee tokens, daily attributed series with biggest day, top coins, total vs all-time-profitable users. 404 if the address has no ledger revenue. |
+| `trader_builders` | Starter+ | `address` 0x-hex, `since` default 30d (clamped 90d) | `GET /trader/{address}/builders` | Every builder a wallet trades through, ordered by fees paid, with fills, volume, and first/last seen in the window. |
+| `builder_traders` | Pro+ | `builder` 0x-hex, `period` default week, `sort` builderFee/volume/pnl, `limit` 1-500 default 50, `offset` | `GET /builders/{builder}/traders` | The builder's attributed wallets with PnL, fees, volume, equity, and all-time `pnlTier`/`sizeTier` labels (null if untracked). |
+| `builder_fills` | Pro+ | `builder` 0x-hex, `since` default 24h (clamped 90d), optional `coin` and `address` filters, `limit` 1-500, `offset` | `GET /builders/{builder}/fills` | Individual attributed fills: time, wallet, coin, marketType (perp/spot/hip4), side, price, size, volume, PnL, builder fee, oid/tid. |
+| `builder_cohorts` | Pro+ | `builder` 0x-hex, `period` default week | `GET /builders/{builder}/cohorts` | User-base composition by all-time PnL and size tier (largest first, incl. `untracked`), each with users, share, fees, volume, PnL, fills. |
+| `builder_retention` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/retention` | Monthly retention triangle, last 12 calendar months, oldest first: `newWallets` plus `activeWallets[]` per subsequent month (orders plane — counts can exceed attributed-fill user counts). |
+| `builder_overlap` | Pro+ | `builder` 0x-hex, `period` default week | `GET /builders/{builder}/overlap` | Top 10 other builders sharing this builder's active users: sharedUsers, share, and fees those users paid to the other builder. |
+| `builder_journey` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/journey` | Revenue ramp of the trailing-year acquisition cohort (>= 3 lifetime attributed fills): avg/median lifetime fees per wallet, whale `concentration`, days to peak / 50% / 75% of lifetime revenue, and a peak-day bucket split. |
+| `builder_lifecycle` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/lifecycle` | One snapshot of the LIFETIME user base (orders plane) split into five mutually exclusive statuses — active, cooling, switched, dormant, movedOn — plus trueRetention, churn, competitiveLoss, and the fees switched wallets paid rivals in 30d. |
+| `builder_heatmap` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/heatmap` | Fixed trailing 84 days as a zero-filled 7x24 UTC weekday-by-hour grid (Sunday first), each cell carrying volumeUsd, feesUsd, and fills totalled over the window. |
+| `builder_orders` | Pro+ | `builder` 0x-hex, `period` default week | `GET /builders/{builder}/orders` | Placement-plane intent: totalIntents, action mix, time-in-force mix, reduceOnlyShare, a stop/TP trigger breakdown, and fillConversion (trigger history begins 2026-03-24). |
+
+---
+
 ## Tools
 
-82 total read-only analytics tools:
+103 total read-only analytics tools:
 
 - 43 existing Hyperliquid market, trader, cohort, risk, cross-market asset, and live analytics tools
 - 12 HIP-4 outcome-contract tools
 - 27 position-lifecycle, execution-quality, trader-archetype, market-structure, comparison, and recent-cohort tools
+- 9 entity-resolution, exchange-aggregate, PnL-leader, and plan-introspection tools
+- 12 builder-analytics tools (ledger-exact revenue leaderboard/profile, traders, fills, cohorts, retention, overlap, user lifecycle, journey economics, activity heatmap, order intent, and per-wallet builder lookup)
 - All tools require a Coinversa API key
 - The Coinversa API enforces tier-specific access
 
@@ -502,6 +530,23 @@ Tools:
 - `live_cohort_bias_history`
 - `pulse_recent_closed_positions`
 
+### Builder Analytics
+
+Builder addresses are `0x` plus 40 hex characters, like wallets. See the Builder Analytics Tools table above for tiers and inputs.
+
+- `builder_leaderboard` — Builders ranked by exact ledger revenue with attributed metrics and deltas.
+- `builder_profile` — One builder's revenue, daily series, top coins, and user profitability.
+- `builder_traders` — A builder's attributed wallets with all-time cohort tiers.
+- `builder_fills` — Individual attributed fills through a builder.
+- `builder_cohorts` — A builder's user base split by behavioral tier.
+- `builder_retention` — Monthly new-user retention triangle.
+- `builder_overlap` — Which other builders share this builder's users.
+- `trader_builders` — Every builder one wallet trades through.
+- `builder_journey` — How fast and how unevenly a builder monetizes a new user.
+- `builder_lifecycle` — Where every wallet that ever traded via a builder stands today.
+- `builder_heatmap` — 7x24 UTC weekday-by-hour activity grid over the trailing 12 weeks.
+- `builder_orders` — What a builder's users intend at placement time, before anything fills.
+
 ---
 
 ## Example Prompts
@@ -536,6 +581,7 @@ Coinversa Pulse is intentionally read-only.
 
 When installing any MCP server:
 
+- Prefer the hosted OAuth endpoint; it keeps the API key out of client config files.
 - Install from the official package source.
 - Use the pinned package version shown in this document.
 - Use a separate API key for this MCP skill where possible.
@@ -549,7 +595,9 @@ When installing any MCP server:
 ## Links
 
 - Website: [coinversa.ai](https://coinversa.ai)
+- MCP setup guide: [docs.coinversa.ai/mcp/setup](https://docs.coinversa.ai/mcp/setup)
 - API Docs: [coinversa.ai/developers](https://coinversa.ai/developers)
+- Privacy: [coinversa.ai/privacy](https://coinversa.ai/privacy) · Terms: [coinversa.ai/terms](https://coinversa.ai/terms)
 - GitHub: [github.com/coinversaa/mcp-server](https://github.com/coinversaa/mcp-server)
 - npm: [@coinversaa/mcp-server](https://www.npmjs.com/package/@coinversaa/mcp-server)
 - Support: [chat@coinversaa.ai](mailto:chat@coinversaa.ai)

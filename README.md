@@ -6,6 +6,23 @@ Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, i
 
 **Now with HIP-4 outcome contracts and builder dex support** — inspect prediction-market style outcome contracts, settlements, commodities (gold, silver, oil), stocks (TSLA, AAPL), and perps across 8 dexes and 369+ markets.
 
+## What's new in 0.11.1
+
+**Builder user-lifecycle, journey, heatmap, and order-intent analytics.** 4 more tools over the same builder-fee data, covering where a builder's users stand today, how fast it monetizes a new wallet, when its flow actually trades, and what its users intend at order placement.
+
+| New tool | What it answers |
+|----------|-----------------|
+| `builder_journey` [Pro] | "How fast and how unevenly does builder X monetize a new user?" |
+| `builder_lifecycle` [Pro] | "How many of builder X's users are still active, and how many did a rival take?" |
+| `builder_heatmap` [Pro] | "What hours does builder X's volume peak, and when is it safe to ship?" |
+| `builder_orders` [Pro] | "Do builder X's users place stops and take-profits, and how much of their order flow actually fills?" |
+
+Tool count: **99 → 103**.
+
+Also in 0.11.1:
+- **Tool titles and annotations** — every tool now carries a human-readable `title` and MCP annotations (`readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: true`), so clients can label the tools and treat them as read-only without prompting.
+- **Hosted connector parity** — this package now ships exactly the tool set served by the hosted OAuth endpoint at `https://mcp.coinversa.ai/mcp`. The obsolete header-authenticated HTTP entrypoint that used to live in this repo has been removed; see [Quick Start](#quick-start) for the two supported ways to connect.
+
 ## What's new in 0.11.0
 
 **Builder analytics — 8 new tools (91 → 99).** The Hyperliquid builder-code
@@ -129,144 +146,188 @@ Other 0.6.0 housekeeping: default API URL points at production; removed stale ha
 
 ## Quick Start
 
-### API Key Required
+There are two ways to connect. Both expose the same 103 read-only tools and both require a Coinversa API key (`cvsa_...`) — there is no keyless tier.
 
-Get a key at [coinversa.ai/developers](https://coinversa.ai/developers) or email [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
+| Method | Where | Auth | Best for |
+|--------|-------|------|----------|
+| **Hosted Remote MCP** (recommended) | `https://mcp.coinversa.ai/mcp` | OAuth 2.1 in the browser — no key handling in the client | Claude.ai, Claude Desktop, Claude Code, Cursor, ChatGPT, Perplexity, any Streamable HTTP client |
+| Local stdio MCP (this package) | `npx -y @coinversaa/mcp-server@0.11.1` | `COINVERSAA_API_KEY` env var | Codex and other stdio-only clients, air-gapped setups, development |
 
-You can connect in two ways:
+The canonical, always-current client guide lives at [docs.coinversa.ai/mcp/setup](https://docs.coinversa.ai/mcp/setup). The snippets below mirror it.
 
-| Method | Endpoint / command | Best for |
-|--------|--------------------|----------|
-| Hosted Remote MCP | `https://mcp.coinversa.ai/mcp` | Remote MCP clients and custom connectors that support Streamable HTTP |
-| Local stdio MCP | `npx -y @coinversaa/mcp-server@latest` | Claude Desktop, Cursor, Claude Code, Codex, and local MCP clients |
+### Hosted Remote MCP (OAuth)
 
-Remote MCP clients should send the Coinversa key as either `Authorization: Bearer cvsa_...` or `X-API-Key: cvsa_...`.
+Paste the URL into your client and leave every auth/header field empty. The client discovers the OAuth flow automatically and opens a Coinversa authorization page in your browser. There you either:
 
-Local MCP clients must pass `COINVERSAA_API_KEY`:
+- click **Sign in / Sign up & get a key** — the developer portal opens in a popup, you pick (or auto-create) a key, and a one-time connect code is handed back to the authorization page; the raw key never reaches the MCP server in this path — or
+- paste an existing `cvsa_` key directly.
 
-```json
-{
-  "mcpServers": {
-    "coinversaa": {
-      "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@latest"],
-      "env": {
-        "COINVERSAA_API_KEY": "cvsa_your_key_here"
-      }
-    }
-  }
-}
-```
+Click **Authorize** and you are connected. New accounts get 14 days of Pro, no credit card. Revoking a key in the [developer portal](https://developers.coinversa.ai/keys) instantly disconnects every agent that authorized with it.
+
+#### Claude.ai (web)
+
+1. Open [claude.ai/customize/connectors?modal=add-custom-connector](https://claude.ai/customize/connectors?modal=add-custom-connector).
+2. **Name:** `Coinversa` — **URL:** `https://mcp.coinversa.ai/mcp`. Leave the auth fields empty.
+3. Click **Add**, then **Connect**; sign in on the Coinversa page and click **Authorize**.
+4. In a new chat ask: *"What are the global trading stats from Coinversa Pulse?"* — Claude should call `pulse_global_stats`.
 
 #### Claude Desktop
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+Claude Desktop speaks stdio only, so use the `mcp-remote` shim, which bridges stdio ↔ HTTP and handles the OAuth dance. Edit your config file:
+
+| OS | Path |
+|----|------|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Linux | `~/.config/Claude/claude_desktop_config.json` |
 
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
+    "coinversa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@latest"],
-      "env": {
-        "COINVERSAA_API_KEY": "cvsa_your_key_here"
-      }
+      "args": ["-y", "mcp-remote", "https://mcp.coinversa.ai/mcp"]
     }
   }
 }
 ```
+
+Fully quit and reopen Claude Desktop. On first connection `mcp-remote` opens the Coinversa authorization page in your browser — sign in and click **Authorize**.
 
 #### Cursor
 
-Add to `.cursor/mcp.json` in your project root:
+Cursor supports HTTP MCP servers natively. Add to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project):
 
 ```json
 {
   "mcpServers": {
-    "coinversaa": {
-      "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@latest"],
-      "env": {
-        "COINVERSAA_API_KEY": "cvsa_your_key_here"
-      }
+    "coinversa": {
+      "url": "https://mcp.coinversa.ai/mcp"
     }
   }
 }
 ```
+
+Restart Cursor and approve the authorization prompt in your browser. The one-click **Install in Cursor** deeplink at [developers.coinversa.ai/connect](https://developers.coinversa.ai/connect) works too.
 
 #### Claude Code
 
 ```bash
-claude mcp add coinversaa -- npx -y @coinversaa/mcp-server@latest
+claude mcp add --transport http coinversa https://mcp.coinversa.ai/mcp
 ```
 
-Set the env var in your shell:
+Then run `/mcp` inside Claude Code and choose **Authenticate** for `coinversa`; the browser flow is the same as above.
+
+#### ChatGPT, Perplexity, and other remote clients
+
+Add a custom connector / remote MCP server with URL `https://mcp.coinversa.ai/mcp` and no headers. The client will open the Coinversa authorization page on first use.
+
+### Local stdio MCP (npx + API key)
+
+For stdio-only clients (for example Codex) or when you would rather hold the key yourself, run this npm package locally. Get a key from the [developer portal](https://developers.coinversa.ai/keys).
+
+```json
+{
+  "mcpServers": {
+    "coinversa": {
+      "command": "npx",
+      "args": ["-y", "@coinversaa/mcp-server@0.11.1"],
+      "env": {
+        "COINVERSAA_API_KEY": "cvsa_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Or from a shell:
+
 ```bash
-export COINVERSAA_API_KEY="cvsa_your_key_here"
+COINVERSAA_API_KEY=cvsa_... npx -y @coinversaa/mcp-server@0.11.1
 ```
 
-That's it. No cloning, no building — `npx` handles everything for local MCP.
+This runs the same tools locally over stdio, authenticated by the env key instead of OAuth. The stdio server exits at startup if `COINVERSAA_API_KEY` is missing. No cloning, no building — `npx` handles everything.
 
-## Remote MCP (HTTPS Connector)
+### Verify it works
 
-Hosted remote endpoint:
+Ask the agent: *"Use Coinversa Pulse to show me the top 5 traders on Hyperliquid by total PnL this week."* You should see a `pulse_leaderboard` call with ranked addresses. `pulse_my_plan` shows which plan the connected key is on and what each tier unlocks. If the agent reports a 401, the authorization expired or the key was revoked — reconnect the connector and it will reopen the authorization page.
 
-```text
-https://mcp.coinversa.ai/mcp
-```
+## Hosted Remote MCP
 
-Use the hosted endpoint with remote MCP clients such as Perplexity custom
-connectors, or any MCP client that supports Streamable HTTP.
+**Endpoint:** `https://mcp.coinversa.ai/mcp` — Streamable HTTP, stateless. Each `POST /mcp` carries one JSON-RPC request (or batch) and gets its response on that connection; there are no server-side sessions to resume, so `GET /mcp` and `DELETE /mcp` return `405 Method Not Allowed`. There is no SSE endpoint.
 
-The npm / stdio workflow above remains the recommended path for Claude Desktop,
-Cursor, Claude Code, Codex, and other local MCP clients.
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/mcp` | `POST` | MCP Streamable HTTP endpoint (requires a valid OAuth access token) |
+| `/health` | `GET` | Health check — returns `{ ok, name, version }` |
+| `/.well-known/oauth-authorization-server` | `GET` | OAuth 2.1 authorization-server metadata (RFC 8414) |
+| `/.well-known/oauth-protected-resource/mcp` | `GET` | Protected-resource metadata (RFC 9728) — this is what clients follow from the `401` on `/mcp` |
+| `/authorize` | `GET` | Authorization endpoint; renders the consent page |
+| `/token` | `POST` | Token endpoint (`authorization_code` + PKCE, `refresh_token`) |
+| `/register` | `POST` | Dynamic client registration (RFC 7591) |
+| `/revoke` | `POST` | Token revocation (RFC 7009) |
 
-For remote MCP clients such as Perplexity custom connectors, this repo also
-ships a separate HTTP entrypoint:
+The hosted server is operated by Coinversa and calls the first-party Coinversa API at `https://api.coinversa.ai` on your behalf, with the key you authorized. It is not a third-party proxy. It serves the same tool definitions as this package (same names, descriptions, input schemas, titles, and annotations — enforced by `tests/toolParity.test.ts`); this repository is the source of the npm stdio package, not of the hosted OAuth server itself.
 
-```bash
-npm run build
-PORT=3000 npm run start:http
-```
+## Authentication
 
-Remote endpoints:
+The hosted endpoint supports exactly one authentication method: **OAuth 2.1 with PKCE (S256) and dynamic client registration**. Every conformant client (Claude.ai, Claude Desktop via `mcp-remote`, Claude Code, Cursor, ChatGPT, Perplexity) handles this automatically from the URL alone.
 
-| Endpoint | Transport | Notes |
-|----------|-----------|-------|
-| `/mcp` | Streamable HTTP | Recommended remote MCP endpoint |
-| `/sse` | HTTP + SSE | Legacy compatibility endpoint |
-| `/health` | JSON | Health check |
+How it works:
 
-Authentication is read-only API-key forwarding. The remote MCP accepts a
-Coinversa key via either header:
+1. The client `POST`s to `/mcp` without a token, gets `401` with a `WWW-Authenticate` header pointing at the protected-resource metadata, and discovers the authorization server from there.
+2. The client registers itself via `/register` (DCR), then opens `/authorize` in the browser with a PKCE code challenge.
+3. You see the Coinversa consent page. You either paste a `cvsa_` key or click **Sign in / Sign up & get a key**, which opens the developer portal in a popup and returns a short-lived, single-use connect code to the consent page. In the portal path the raw key never reaches the MCP server — it stores only a key reference that the backend resolves.
+4. The client exchanges the authorization code (plus PKCE verifier) at `/token` for tokens.
 
-```text
-Authorization: Bearer cvsa_...
-X-API-Key: cvsa_...
-```
+Token details:
 
-The remote server forwards that key to the Coinversa API as `X-API-Key`. If no
-key is supplied, MCP requests are rejected. The default backend is production (`https://api.coinversa.ai`); set
-`COINVERSAA_API_URL` only for self-hosted or staging deployments.
+| Token | Format | Lifetime |
+|-------|--------|----------|
+| Access token | opaque, random | 1 hour |
+| Refresh token | opaque, random, rotated on every refresh | 90 days, sliding |
 
-Coinversa's hosted production Remote MCP URL is:
+Tokens are stored hashed (SHA-256) on the server. Revoking the underlying API key in the developer portal invalidates every session authorized with it.
 
-```text
-https://mcp.coinversa.ai/mcp
-```
+There is **no header-based API-key authentication on the hosted endpoint.** Requests that skip OAuth and put a raw `cvsa_` key in an `Authorization` or custom header are rejected with `401`. If you want to authenticate with a key you hold, run the local stdio server instead (see above), which reads `COINVERSAA_API_KEY` from its environment and sends it to the Coinversa API itself.
 
-For self-hosted deployments, run `build/remote.js` behind TLS at your own stable
-URL.
+## Privacy & data handling
 
-Optional deployment env vars:
+The hosted server is a thin, stateless bridge between your MCP client and the Coinversa API.
 
-| Variable | Purpose |
-|----------|---------|
-| `PORT` | HTTP port, default `3000` |
-| `HOST` | Bind host, default `0.0.0.0` |
-| `COINVERSAA_API_URL` | Backend API base URL override |
-| `COINVERSAA_REMOTE_ALLOWED_HOSTS` | Comma-separated allowed Host headers |
-| `COINVERSAA_REMOTE_ALLOW_ENV_API_KEY=true` | Allow env-key fallback for private/internal deployments only |
+**What it stores (a SQLite database on Coinversa infrastructure):**
+
+- OAuth client registrations created through dynamic client registration (client id, redirect URIs, client metadata).
+- Access and refresh tokens, stored as SHA-256 hashes — the plaintext token exists only in your client.
+- The API-key grant behind each token: either a **key id** (a reference the backend resolves; the key itself is never stored) when you connected through the developer portal, or the pasted key **encrypted at rest with AES-256-GCM** under a key-encryption key that lives outside the database.
+
+**What it never stores:**
+
+- Conversation content. The server only ever sees the tool call in flight, not your chat.
+- Tool arguments or results beyond the lifetime of the request being served. Nothing is written to a database, and parameters are not logged.
+- Wallet private keys, seed phrases, signatures, exchange credentials, or any custody material — no tool asks for them and none exist.
+
+**The local stdio server** stores nothing at all: it holds `COINVERSAA_API_KEY` in memory for the life of the process and forwards each tool call to the Coinversa API.
+
+**What tool calls send to the Coinversa API:** the parameters you can see in each tool's schema — market symbols, public wallet addresses, cohort names, HIP-4 outcome ids, builder addresses, time windows — plus your API key for authorization and metering. Usage is counted against the key's plan; see [Rate Limits](#rate-limits).
+
+**Scope:** every tool is read-only and is annotated as such (`readOnlyHint: true`, `destructiveHint: false`). The server cannot place orders, sign transactions, move funds, approve agents, or change any account setting on Hyperliquid or Coinversa.
+
+**Revocation:** revoke the API key in the [developer portal](https://developers.coinversa.ai/keys) to disconnect every agent that authorized with it, or remove the connector in your client; clients may also call `/revoke`.
+
+Policies: [coinversa.ai/privacy](https://coinversa.ai/privacy) · [coinversa.ai/terms](https://coinversa.ai/terms). Questions or data requests: [chat@coinversaa.ai](mailto:chat@coinversaa.ai).
+
+## Connector directory
+
+For directory reviewers and security teams, in one place:
+
+- **Read-only.** 103 tools, all `GET`-equivalent analytics; no write, trade, transfer, or account-mutation capability of any kind. No financial transactions are possible through this connector.
+- **Auth:** OAuth 2.1, PKCE S256, dynamic client registration, refresh-token rotation. No API keys in headers, no static secrets in client config.
+- **Data source:** first-party — the server is operated by Coinversa and calls only Coinversa's own API at `api.coinversa.ai` (plus, during sign-in, the Coinversa developer portal/backend). No third-party data brokers or LLM providers are called.
+- **Transport:** Streamable HTTP (stateless `POST /mcp`), TLS only.
+- **Data retention:** hashed tokens, encrypted key or key id, DCR client records. No conversation or parameter logging.
+- **Source:** [github.com/coinversaa/mcp-server](https://github.com/coinversaa/mcp-server) (MIT) — the npm stdio package, with the same tool definitions the hosted connector serves.
+- **Support:** [chat@coinversaa.ai](mailto:chat@coinversaa.ai) · [Privacy](https://coinversa.ai/privacy) · [Terms](https://coinversa.ai/terms)
 
 ## Builder Dex Markets
 
@@ -319,9 +380,9 @@ Numbers are illustrative — call `pulse_cross_market_asset` with `canonical: "G
 
 The 3 asset tools call `/api/public/v1/assets*` endpoints on the production Coinversa backend (`https://api.coinversa.ai`). Self-hosted or forked setups need to run a backend that exposes these routes; see the Coinversa backend repo for the reference implementation.
 
-## Available Tools (82)
+## Available Tools (103)
 
-All 99 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
+All 103 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
 
 ### Risk Tools Freshness
 
@@ -409,6 +470,25 @@ The lifecycle tools are the preferred position-level surface for new agents. A l
 | Market-wide lifecycle structure | `pulse_coin_alpha_map`, `pulse_hour_profitability`, `pulse_market_concentration`, `pulse_style_distribution` |
 | Compare wallets | `pulse_compare` |
 | Analyze currently-hot cohorts | `pulse_cohort_recent_positions`, `pulse_cohort_recent_trades`, `pulse_cohort_recent_lifecycle_stats`, `pulse_cohort_recent_top_positions`, `pulse_cohort_recent_alpha_concentration` |
+
+### Builder Analytics — 0.11.x
+
+Builders (frontends, wallet apps, bots, HIP-3 dexes) charge per-order builder fees on Hyperliquid. Revenue figures are exact, from the on-chain cumulative builder-fee ledger; volume/user/fill detail comes from order→fill attribution and slightly undercounts because trigger-order (stop/TP) fills are not yet attributed — every response carries a `dataNotes` explanation and a `verified` ledger-block stamp. Builder addresses are `0x` plus 40 hex characters.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `builder_leaderboard` | Starter | Builders ranked by exact ledger revenue, with attributed volume/users/fills and prev-window deltas |
+| `builder_profile` | Starter | One builder: revenue, daily series, top coins, profitable-user share |
+| `trader_builders` | Starter | Every builder one wallet trades through, ordered by fees paid |
+| `builder_traders` | Pro | A builder's attributed wallets with PnL, fees, volume, and all-time cohort tiers |
+| `builder_fills` | Pro | Individual attributed fills through a builder (perp/spot/HIP-4) |
+| `builder_cohorts` | Pro | A builder's user base split by behavioral tier |
+| `builder_retention` | Pro | Monthly new-user retention triangle, last 12 months |
+| `builder_overlap` | Pro | Which other builders share this builder's active users |
+| `builder_journey` | Pro | Revenue ramp of the trailing-year acquisition cohort: lifetime fees per wallet, whale concentration, days to peak / 50% / 75% of lifetime revenue |
+| `builder_lifecycle` | Pro | Lifetime user base split into active / cooling / switched / dormant / movedOn, plus true retention, churn, and competitive loss |
+| `builder_heatmap` | Pro | Trailing 84 days as a 7×24 UTC weekday-by-hour grid of volume, fees, and fills |
+| `builder_orders` | Pro | Placement-plane intent: action and time-in-force mix, reduce-only share, stop/TP trigger breakdown, fill conversion |
 
 ### Pulse — Trader Profiles
 
@@ -536,9 +616,11 @@ Once connected, try asking your AI:
 
 ## Environment Variables
 
+These apply to the **local stdio server** (`npx -y @coinversaa/mcp-server@0.11.1`). The hosted endpoint needs no configuration.
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `COINVERSAA_API_KEY` | Yes | — | Your API key (starts with `cvsa_`). Required for every tool. |
+| `COINVERSAA_API_KEY` | Yes | — | Your API key (starts with `cvsa_`). Required for every tool; the stdio server exits at startup without it. |
 | `COINVERSAA_API_URL` | No | `https://api.coinversa.ai` | Override the API host. Only needed if you operate your own Coinversa backend (self-hosted or fork). |
 
 ## Rate Limits
@@ -561,15 +643,26 @@ Rate limit headers are included in every response:
 
 ## Development
 
+This repository is the source of the `@coinversaa/mcp-server` npm package — a stdio MCP server whose entry is `src/index.ts` → `createCoinversaServer()` in `src/coinversaServer.ts`.
+
 ```bash
 git clone https://github.com/coinversaa/mcp-server.git
 cd mcp-server
 npm install
 npm run build
 
-# Test with MCP Inspector
+# run the stdio server against your key
+COINVERSAA_API_KEY=cvsa_... node build/index.js
+
+# or drive it with the MCP Inspector
 npx @modelcontextprotocol/inspector build/index.js
+
+# unit tests (bun) and typecheck
+bun test
+npx tsc --noEmit
 ```
+
+The hosted OAuth connector at `https://mcp.coinversa.ai/mcp` is operated by Coinversa and is not built from this repository; it serves the same tool set.
 
 ## What Makes This Different
 

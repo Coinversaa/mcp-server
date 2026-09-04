@@ -1,23 +1,30 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Coinversaa/mcp-server",
-  "description": "Crypto intelligence for AI agents. Hyperliquid trader analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, HIP-4 outcome contracts, outcome/perp position context, all-time & 30-day-refreshed cohorts, live market data, builder-dex markets, and cross-market asset taxonomy. API key required.",
+  "description": "Read-only crypto intelligence for AI agents: 103 tools for Hyperliquid trader analytics, builder-revenue analytics, position lifecycles with MAE/MFE, trader archetypes, HIP-4 outcome contracts, cohorts, live market data, builder-dex markets, and cross-market asset taxonomy. Hosted endpoint uses OAuth 2.1 (PKCE + dynamic client registration); stdio package uses a Coinversa API key. No trading or fund movement. Support: chat@coinversaa.ai",
+  "websiteUrl": "https://coinversa.ai",
   "repository": {
     "url": "https://github.com/coinversaa/mcp-server",
     "source": "github"
   },
-  "version": "0.8.0",
+  "version": "0.11.1",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.coinversa.ai/mcp"
+    }
+  ],
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@coinversaa/mcp-server",
-      "version": "0.8.0",
+      "version": "0.11.1",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
-          "description": "Coinversa API key (starts with cvsa_). Required for every tool. Get one at https://coinversa.ai/developers.",
+          "description": "Coinversa API key (starts with cvsa_). Required by the stdio server for every tool. Get one at https://developers.coinversa.ai/keys.",
           "isRequired": true,
           "format": "string",
           "isSecret": true,
