@@ -1,7 +1,7 @@
 ---
 name: coinversaa-pulse
-description: "Read-only crypto intelligence for AI agents. 103 tools (OAuth 2.1 on the hosted endpoint, API key for local stdio) for Hyperliquid trader analytics, builder-fee revenue analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, behavioral cohorts, HIP-4 outcome contracts, outcome/perp position context, syncer-backed risk data, live market data, builder dex markets, commodities, stocks, indices, cross-market asset taxonomy, liquidation heatmaps, official per-dex OI, and whale tracking across the full Hyperliquid wallet universe. This skill does not trade, sign transactions, move funds, request private keys, custody assets, or require wallet approvals. Call pulse_global_stats for live coverage totals."
-version: 0.11.1
+description: "Read-only crypto intelligence for AI agents. 107 tools (OAuth 2.1 on the hosted endpoint, API key for local stdio) for Hyperliquid trader analytics, builder-fee revenue analytics, position lifecycles with MAE/MFE execution quality, trader archetype discovery, behavioral cohorts, HIP-4 outcome contracts, outcome/perp position context, syncer-backed risk data, live market data, builder dex markets, commodities, stocks, indices, cross-market asset taxonomy, L4 order book depth and resting-order wallets, dataset coverage reporting, liquidation heatmaps, official per-dex OI, and whale tracking across the full Hyperliquid wallet universe. This skill does not trade, sign transactions, move funds, request private keys, custody assets, or require wallet approvals. Call pulse_global_stats for live coverage totals."
+version: 0.12.0
 author: Coinversa <chat@coinversaa.ai>
 homepage: https://coinversa.ai
 repository: https://github.com/coinversaa/mcp-server
@@ -108,7 +108,7 @@ The canonical client guide is [docs.coinversa.ai/mcp/setup](https://docs.coinver
 | Method | Where | Auth | Best for |
 |--------|-------|------|----------|
 | Hosted Remote MCP (recommended) | `https://mcp.coinversa.ai/mcp` | OAuth 2.1 in the browser | Claude.ai, Claude Desktop, Claude Code, Cursor, ChatGPT, Perplexity, any Streamable HTTP client |
-| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.11.1` | `COINVERSAA_API_KEY` env var | Codex and other stdio-only clients, development |
+| Local stdio MCP | `npx -y @coinversaa/mcp-server@0.12.0` | `COINVERSAA_API_KEY` env var | Codex and other stdio-only clients, development |
 
 ### Hosted Remote MCP (OAuth 2.1)
 
@@ -174,7 +174,7 @@ For stdio-only clients, or when you prefer to hold the key yourself. Get a key a
   "mcpServers": {
     "coinversa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.11.1"],
+      "args": ["-y", "@coinversaa/mcp-server@0.12.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -183,7 +183,7 @@ For stdio-only clients, or when you prefer to hold the key yourself. Get a key a
 }
 ```
 
-Shell equivalent: `COINVERSAA_API_KEY=cvsa_... npx -y @coinversaa/mcp-server@0.11.1`
+Shell equivalent: `COINVERSAA_API_KEY=cvsa_... npx -y @coinversaa/mcp-server@0.12.0`
 
 #### OpenClaw
 
@@ -336,22 +336,31 @@ Builders (frontends, bots, HIP-3 dexes) charge per-order builder fees on Hyperli
 | `builder_overlap` | Pro+ | `builder` 0x-hex, `period` default week | `GET /builders/{builder}/overlap` | Top 10 other builders sharing this builder's active users: sharedUsers, share, and fees those users paid to the other builder. |
 | `builder_journey` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/journey` | Revenue ramp of the trailing-year acquisition cohort (>= 3 lifetime attributed fills): avg/median lifetime fees per wallet, whale `concentration`, days to peak / 50% / 75% of lifetime revenue, and a peak-day bucket split. |
 | `builder_lifecycle` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/lifecycle` | One snapshot of the LIFETIME user base (orders plane) split into five mutually exclusive statuses — active, cooling, switched, dormant, movedOn — plus trueRetention, churn, competitiveLoss, and the fees switched wallets paid rivals in 30d. |
-| `builder_heatmap` | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/heatmap` | Fixed trailing 84 days as a zero-filled 7x24 UTC weekday-by-hour grid (Sunday first), each cell carrying volumeUsd, feesUsd, and fills totalled over the window. |
+| `builder_heatmap` (withheld by default) | Pro+ | `builder` 0x-hex (no other params) | `GET /builders/{builder}/heatmap` | Fixed trailing 84 days as a zero-filled 7x24 UTC weekday-by-hour grid (Sunday first), each cell carrying volumeUsd, feesUsd, and fills totalled over the window. |
 | `builder_orders` | Pro+ | `builder` 0x-hex, `period` default week | `GET /builders/{builder}/orders` | Placement-plane intent: totalIntents, action mix, time-in-force mix, reduceOnlyShare, a stop/TP trigger breakdown, and fillConversion (trigger history begins 2026-03-24). |
 
 ---
 
 ## Tools
 
-103 total read-only analytics tools:
+107 read-only analytics tools are registered; **106 are advertised** by default (see below):
 
 - 43 existing Hyperliquid market, trader, cohort, risk, cross-market asset, and live analytics tools
 - 12 HIP-4 outcome-contract tools
 - 27 position-lifecycle, execution-quality, trader-archetype, market-structure, comparison, and recent-cohort tools
 - 9 entity-resolution, exchange-aggregate, PnL-leader, and plan-introspection tools
 - 12 builder-analytics tools (ledger-exact revenue leaderboard/profile, traders, fills, cohorts, retention, overlap, user lifecycle, journey economics, activity heatmap, order intent, and per-wallet builder lookup)
+- 4 L4 order-book tools (depth summary, level ladder, resting-order whales, trigger-order map)
+- 1 dataset-coverage tool (`data_coverage`)
 - All tools require a Coinversa API key
 - The Coinversa API enforces tier-specific access
+
+**`builder_heatmap` is withheld by default.** Its upstream cannot answer inside
+the client timeout until the hourly rollup is backfilled, so advertising it
+only produced timeouts. It is still registered: on the local stdio server set
+`COINVERSAA_HIDDEN_TOOLS=` (explicitly empty) to advertise all 107, or name a
+different comma-separated list to withhold other tools instead. Leaving the
+variable unset withholds `builder_heatmap`.
 
 ---
 
@@ -417,7 +426,6 @@ Use them when the user explicitly asks for the old closed-position payload or a 
 
 - `pulse_global_stats` — Global Hyperliquid stats: total traders, trades, volume, PnL, and data coverage period.
 - `list_markets` — Market discovery for native and builder dex symbols.
-- `pulse_market_overview` — Deprecated alias for `list_markets`.
 - `pulse_leaderboard` — Ranked trader leaderboard.
 - `pulse_hidden_gems` — Underrated high-performing traders.
 - `pulse_most_traded_coins` — Most actively traded coins.
@@ -514,6 +522,25 @@ Tools:
 - `market_historical_oi`
 - `market_recent_candles`
 
+### Order Book — L4 Depth (Pro)
+
+Snapshot-derived, refreshed every 60 s, **latest-only** — there is no book
+history, so "how did the book change" cannot be answered from these. Every
+response carries `as_of_height` (the L1 block) and `age_s`. Coin is
+case-sensitive in the node's own spelling (`BTC`, `xyz:GOLD`, `#28200`) and is
+NOT normalized for these four tools. `market_orderbook` remains the free
+aggregated L2 view.
+
+- `book_summary` — Depth, spread, and imbalance for one coin.
+- `book_levels` — The resting-size ladder, level by level.
+- `book_whales` — The wallets holding the largest resting orders, per side.
+- `book_stop_map` — Where trigger orders are clustered that a move would sweep.
+
+### Coverage
+
+- `data_coverage` — Per dataset: the window start/end, the freshness stamp, and
+  the API route it was read from. Call it before relying on a historical range.
+
 ### Live — Real-Time Analytics
 
 - `live_liquidation_heatmap`
@@ -544,7 +571,7 @@ Builder addresses are `0x` plus 40 hex characters, like wallets. See the Builder
 - `trader_builders` — Every builder one wallet trades through.
 - `builder_journey` — How fast and how unevenly a builder monetizes a new user.
 - `builder_lifecycle` — Where every wallet that ever traded via a builder stands today.
-- `builder_heatmap` — 7x24 UTC weekday-by-hour activity grid over the trailing 12 weeks.
+- `builder_heatmap` — 7x24 UTC weekday-by-hour activity grid over the trailing 12 weeks. *Withheld by default; see [Tools](#tools).*
 - `builder_orders` — What a builder's users intend at placement time, before anything fills.
 
 ---
