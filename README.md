@@ -165,7 +165,7 @@ Other 0.6.0 housekeeping: default API URL points at production; removed stale ha
 
 ## Quick Start
 
-There are two ways to connect. Both expose the same 103 read-only tools and both require a Coinversa API key (`cvsa_...`) — there is no keyless tier.
+There are two ways to connect. Both expose the same 106 read-only tools available by default and both require a Coinversa API key (`cvsa_...`) — there is no keyless tier.
 
 | Method | Where | Auth | Best for |
 |--------|-------|------|----------|
@@ -340,7 +340,7 @@ Policies: [coinversa.ai/privacy](https://coinversa.ai/privacy) · [coinversa.ai/
 
 For directory reviewers and security teams, in one place:
 
-- **Read-only.** 107 tools, all `GET`-equivalent analytics; no write, trade, transfer, or account-mutation capability of any kind. No financial transactions are possible through this connector.
+- **Read-only.** 107 registered tools, 106 available by default — all `GET`-equivalent analytics; no write, trade, transfer, or account-mutation capability of any kind. No financial transactions are possible through this connector.
 - **Auth:** OAuth 2.1, PKCE S256, dynamic client registration, refresh-token rotation. No API keys in headers, no static secrets in client config.
 - **Data source:** first-party — the server is operated by Coinversa and calls only Coinversa's own API at `api.coinversa.ai` (plus, during sign-in, the Coinversa developer portal/backend). No third-party data brokers or LLM providers are called.
 - **Transport:** Streamable HTTP (stateless `POST /mcp`), TLS only.
@@ -399,9 +399,9 @@ Numbers are illustrative — call `pulse_cross_market_asset` with `canonical: "G
 
 The 3 asset tools call `/api/public/v1/assets*` endpoints on the production Coinversa backend (`https://api.coinversa.ai`). Self-hosted or forked setups need to run a backend that exposes these routes; see the Coinversa backend repo for the reference implementation.
 
-## Available Tools (103)
+## Available Tools (106)
 
-All 107 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
+All of them require an API key. The MCP registers 107 tools and advertises 106 by default (`builder_heatmap` is withheld — see [What's new in 0.12.0](#whats-new-in-0120)), and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
 
 ### Risk Tools Freshness
 
@@ -506,8 +506,9 @@ Builders (frontends, wallet apps, bots, HIP-3 dexes) charge per-order builder fe
 | `builder_overlap` | Pro | Which other builders share this builder's active users |
 | `builder_journey` | Pro | Revenue ramp of the trailing-year acquisition cohort: lifetime fees per wallet, whale concentration, days to peak / 50% / 75% of lifetime revenue |
 | `builder_lifecycle` | Pro | Lifetime user base split into active / cooling / switched / dormant / movedOn, plus true retention, churn, and competitive loss |
-| `builder_heatmap` | Pro | Trailing 84 days as a 7×24 UTC weekday-by-hour grid of volume, fees, and fills |
 | `builder_orders` | Pro | Placement-plane intent: action and time-in-force mix, reduce-only share, stop/TP trigger breakdown, fill conversion |
+
+**Currently hidden, not counted above:** `builder_heatmap` [Pro] — trailing 84 days as a 7×24 UTC weekday-by-hour grid of volume, fees, and fills. It is registered but withheld by default because its upstream cannot answer inside the client timeout until the hourly rollup is backfilled. Set `COINVERSAA_HIDDEN_TOOLS=` (explicitly empty) to advertise it.
 
 ### Pulse — Trader Profiles
 
