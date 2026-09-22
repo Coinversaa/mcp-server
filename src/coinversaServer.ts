@@ -17,7 +17,29 @@ export interface CoinversaServerOptions {
   apiUrl?: string;
 }
 
-export const COINVERSA_TOTAL_TOOL_COUNT = 103;
+// Tools whose upstream endpoint cannot currently answer inside the client
+// timeout are withheld from the tool list, matching the hosted connector
+// (2026-09: builder_heatmap, pending its rollup). The hosted server gates
+// these so a config change on the box, not a release, restores them; here
+// the same override is COINVERSAA_HIDDEN_TOOLS in the MCP client's env
+// block. Hidden by default when the variable is ABSENT entirely, so losing
+// the env does not silently re-advertise a tool that times out. Setting it
+// wins in both directions, COINVERSAA_HIDDEN_TOOLS= (explicitly empty)
+// included, which advertises everything.
+//
+// Remove builder_heatmap here when its hourly rollup is backfilled past the
+// 84-day window and the API is repointed at it. That deletion is the
+// deliberate act of shipping the tool.
+const DEFAULT_HIDDEN_TOOLS = "builder_heatmap";
+
+export function hiddenToolsFromEnv(raw: string | undefined = process.env.COINVERSAA_HIDDEN_TOOLS): Set<string> {
+  return new Set((raw ?? DEFAULT_HIDDEN_TOOLS).split(",").map((t) => t.trim()).filter(Boolean));
+}
+
+// Every tool the package knows how to register. The advertised surface is
+// this minus hiddenTools, which is what a client's tools/list returns.
+export const COINVERSA_TOTAL_TOOL_COUNT = 107;
+const COINVERSA_VERSION = "0.12.0";
 export const DEFAULT_COINVERSA_API_URL = "https://api.coinversa.ai";
 
 // ─── Cohort Tier Vocabulary ──────────────────────────────
@@ -74,6 +96,94 @@ export const TIER_SLUGS = [
 /** Zod enum accepting both tier vocabularies — exported for tests. */
 export const tierEnum = z.enum(TIER_SLUGS);
 
+// ─── Response caps (connector layer) ─────────────────────
+// Several upstream routes return unbounded arrays (no limit/offset params) and
+// overflow the client's tool-result cap at their own documented defaults. The
+// helpers below cap uniformly, always BEFORE toon encoding, and stamp the
+// result with truncated/totalCount/note so the model knows how to page or
+// narrow instead of silently seeing a partial list.
+
+export type CapNote = string | ((shown: number, total: number) => string);
+export type CapOptions = {
+  /** Skip this many rows before slicing (0-based). */
+  offset?: number;
+  /** Keep the LAST `limit` rows instead of the first (time series: newest). */
+  keepEnd?: boolean;
+  /** One-line hint on how to page or narrow; only emitted when truncated. */
+  note?: CapNote;
+};
+
+/**
+ * Cap `obj[key]` (an array) to `limit` rows. Returns a copy of `obj` with the
+ * sliced array plus `totalCount` (original length) and `truncated` (true when
+ * any row was dropped), and `note` when truncated. Non-array values pass
+ * through untouched.
+ */
+export function capArray<T extends Record<string, any>>(obj: T, key: string, limit: number, opts: CapOptions = {}): T & { totalCount: number; truncated: boolean; note?: string } {
+  const arr = obj?.[key];
+  if (!Array.isArray(arr)) return { ...obj, totalCount: 0, truncated: false };
+  const total = arr.length;
+  const offset = Math.max(0, opts.offset ?? 0);
+  const sliced = opts.keepEnd
+    ? arr.slice(Math.max(0, total - offset - limit), Math.max(0, total - offset))
+    : arr.slice(offset, offset + limit);
+  const truncated = sliced.length < total;
+  const out: any = { ...obj, [key]: sliced, totalCount: total, truncated };
+  if (truncated && opts.note) {
+    out.note = typeof opts.note === "function" ? opts.note(sliced.length, total) : opts.note;
+  }
+  return out;
+}
+
+/**
+ * Downsample a time series to one row per `bucketMs` bucket, keeping the row
+ * with the highest `score` in each bucket (e.g. max |basisPct|). Output is
+ * ordered by bucket ascending. `bucketMs <= 0` returns the input unchanged.
+ */
+export function bucketSeries<T>(rows: T[], bucketMs: number, ts: (row: T) => number, score: (row: T) => number): T[] {
+  if (!Array.isArray(rows) || bucketMs <= 0) return rows;
+  const best = new Map<number, T>();
+  for (const row of rows) {
+    const t = Number(ts(row));
+    if (!Number.isFinite(t)) continue;
+    const b = Math.floor(t / bucketMs);
+    const cur = best.get(b);
+    if (cur === undefined || score(row) > score(cur)) best.set(b, row);
+  }
+  return [...best.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row);
+}
+
+/** Bucket width in ms for the mark-dislocation resolutions (1m = raw rows). */
+export const DISLOCATION_RESOLUTION_MS: Record<"1m" | "5m" | "1h", number> = { "1m": 0, "5m": 300_000, "1h": 3_600_000 };
+
+/**
+ * Client-side tier filters for the cohort history routes (the API has none).
+ * `tier` matches either vocabulary: the API emits legacy slugs, so a new slug
+ * is compared through normalizeTier as well as verbatim.
+ */
+export function filterCohortRows<T extends { tierType?: string; tier?: string }>(rows: T[], tierType?: string, tier?: string): T[] {
+  if (!Array.isArray(rows)) return rows;
+  const tiers = tier ? new Set([tier, normalizeTier(tier)]) : null;
+  return rows.filter((r) => (!tierType || r.tierType === tierType) && (!tiers || tiers.has(String(r.tier))));
+}
+
+/** Newest first, then tierType, then tier — so a head cap keeps the latest rows. */
+export function sortCohortRows<T extends Record<string, any>>(rows: T[], timeKey: "timestamp" | "date"): T[] {
+  if (!Array.isArray(rows)) return rows;
+  const cmp = (a: T, b: T) => {
+    const ta = a[timeKey], tb = b[timeKey];
+    if (ta !== tb) return ta > tb ? -1 : 1;
+    const tt = String(a.tierType ?? "").localeCompare(String(b.tierType ?? ""));
+    if (tt !== 0) return tt;
+    return String(a.tier ?? "").localeCompare(String(b.tier ?? ""));
+  };
+  return [...rows].sort(cmp);
+}
+
+/** Sections of /live/risk/coins/{coin}/history a caller can select. */
+export const RISK_HISTORY_SECTIONS = ["oiHistory", "longShortHistory", "cohortBiasHistory", "candleHistory", "markDislocations", "liquidations"] as const;
+export const RISK_HISTORY_DEFAULT_SECTIONS = RISK_HISTORY_SECTIONS.filter((s) => s !== "markDislocations");
+
 export function createCoinversaServer(options: CoinversaServerOptions = {}) {
 const apiKey = options.apiKey;
 // Defaults to production. Override apiUrl / COINVERSAA_API_URL only if you
@@ -89,8 +199,10 @@ const RETRY_DELAY_MS = 1_000;
 // behind the computation already in flight).
 const SLOW_BUILDER_CALL = { timeoutMs: 100_000, retries: 0 } as const;
 
-function shouldRegister(_toolName: string): boolean {
-  return true;
+const hiddenTools = hiddenToolsFromEnv();
+
+function shouldRegister(toolName: string): boolean {
+  return !hiddenTools.has(toolName);
 }
 
 // ─── Shared Validation Schemas ───────────────────────────
@@ -254,16 +366,218 @@ const annotations = {
   readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true,
 } as const;
 
+// ─── Data coverage machinery (ported from the hosted connector) ───
+/** Datasets data_coverage knows how to report. */
+const COVERAGE_DATASETS = ["trades", "builder_ledger", "census", "hip4", "liquidations", "lifecycles", "cohort_history", "book"] as const;
+type CoverageDataset = (typeof COVERAGE_DATASETS)[number];
+
+/** Extract the first YYYY-MM-DD date following "history begins" in a builder dataNotes string. */
+function ledgerStartFromDataNotes(notes: unknown): string | null {
+if (typeof notes !== "string") return null;
+const m = notes.match(/history begins (\d{4}-\d{2}-\d{2})/);
+return m ? m[1] : null;
+}
+
+// ══════════════════════════════════════════════════════════
+// TOOL 2: Data Coverage
+// ══════════════════════════════════════════════════════════
+// Composed only from routes that already exist. One failing source must
+// not fail the tool: sources run one after another (see the burst note at
+// the call site) and a rejection becomes a per-dataset note. Where no route exposes a window
+// start the dataset is still listed, with windowStart null and a note —
+// never a guessed date.
+// retries: 2 keeps callAPI's 429 backoff (1 s, 2 s) — with retries: 0 a
+// burst-limited source failed outright. COVERAGE_PACE_MS spaces the calls
+// so a fresh key (burst 5 Pro / 2 Free, refill 600/min) does not trip the
+// bucket in the first place; 8 sources ≈ 2 s total.
+const COVERAGE_CALL = { timeoutMs: 15_000, retries: 2 } as const;
+const COVERAGE_PACE_MS = 250;
+
+type CoverageRow = {
+  dataset: CoverageDataset;
+  description: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  latest: string | null;
+  freshness: Record<string, unknown> | null;
+  source: string;
+  notes: string[];
+  [extra: string]: unknown;
+};
+const NO_WINDOW_NOTE = "window not exposed by the API yet";
+const coverageSources: Record<CoverageDataset, () => Promise<CoverageRow>> = {
+  trades: async () => {
+    const stats = await callAPI(false, "/pulse/stats", undefined, COVERAGE_CALL);
+    return {
+      dataset: "trades",
+      description: "Indexed Hyperliquid trades with PnL attribution (pulse_* trade, leaderboard, cohort and trader tools).",
+      windowStart: stats?.dataStartDate ?? null,
+      windowEnd: stats?.dataEndDate ?? null,
+      latest: stats?.dataEndDate ?? null,
+      freshness: null,
+      source: "/pulse/stats",
+      totals: { totalTraders: stats?.totalTraders ?? null, totalTrades: stats?.totalTrades ?? null, totalVolume: stats?.totalVolume ?? null },
+      notes: ["windowStart/windowEnd are the first and last UTC day present in the daily trader stats; the route is cached for ~2 minutes."],
+    };
+  },
+  builder_ledger: async () => {
+    const lb = await callAPI(false, "/builders/leaderboard", { period: "month", limit: "1" }, COVERAGE_CALL);
+    const verified = lb?.verified ?? null;
+    const coverage = verified?.coverage ?? null;
+    const notedStart = ledgerStartFromDataNotes(lb?.dataNotes);
+    const notes: string[] = [];
+    let windowStart: string | null = null;
+    if (notedStart) {
+      windowStart = notedStart;
+      notes.push("windowStart is the fee ledger's first on-chain entry, as disclosed in the route's dataNotes.");
+    } else if (coverage?.window_start) {
+      windowStart = coverage.window_start;
+      notes.push("windowStart is the attribution-coverage rollup's window start; the ledger itself may begin earlier.");
+    } else {
+      notes.push(`${NO_WINDOW_NOTE}: the ledger start is only disclosed in dataNotes when a requested window predates it.`);
+    }
+    if (!verified) notes.push("No 'verified' ledger stamp in the response (ledger table absent or empty).");
+    if (!coverage) notes.push("Attribution coverage rollup not provisioned yet (verified.coverage is null).");
+    return {
+      dataset: "builder_ledger",
+      description: "Builder-fee ledger (exact revenue) and order-fill attribution behind the builder_* tools.",
+      windowStart,
+      windowEnd: coverage?.window_end ?? null,
+      latest: verified?.ledger_chain_time ?? null,
+      freshness: verified ? { ledgerBlock: verified.ledger_block ?? null, ledgerChainTime: verified.ledger_chain_time ?? null, coverageComputedAt: coverage?.computed_at ?? null, ecosystemComputedAt: lb?.ecosystem?.computedAt ?? null } : null,
+      source: "/builders/leaderboard?period=month&limit=1 (verified stamp + dataNotes)",
+      notes,
+    };
+  },
+  census: async () => {
+    const res = await callAPI(false, "/census/stamp", undefined, COVERAGE_CALL);
+    const v = res?.verified ?? null;
+    return {
+      dataset: "census",
+      description: "Chain-state census of the open book behind entity and live-position tools (the 'verified' badge).",
+      windowStart: null,
+      windowEnd: null,
+      latest: v?.chain_time ?? null,
+      freshness: v ? { verifiedAtBlock: v.verified_at_block ?? null, chainTime: v.chain_time ?? null, openPositions: v.positions ?? null } : null,
+      source: "/census/stamp",
+      notes: v ? ["Point-in-time snapshot; no history window."] : ["No census stamp yet (pipeline has not run on this database)."],
+    };
+  },
+  hip4: async () => {
+    const res = await callAPI(false, "/hip4/outcomes", { hours: "24" }, COVERAGE_CALL);
+    const outcomes: any[] = Array.isArray(res?.outcomes) ? res.outcomes : [];
+    const latest = outcomes.map((o) => o?.lastTraded).filter((t): t is string => typeof t === "string").sort().pop() ?? null;
+    return {
+      dataset: "hip4",
+      description: "HIP-4 outcome-contract fills, settlements and trader analytics (hip4_* tools).",
+      windowStart: null,
+      windowEnd: null,
+      latest,
+      freshness: latest ? { lastTradedFill: latest } : null,
+      source: "/hip4/outcomes?hours=24 (max lastTraded)",
+      notes: [
+        `${NO_WINDOW_NOTE}: no route reports the first indexed HIP-4 fill.`,
+        "The API clamps every HIP-4 look-back to mainnet launch, 2026-05-02 (hip4MainnetLaunch in the API source).",
+        ...(latest ? [] : ["No outcome traded in the last 24h, so no latest fill timestamp is available."]),
+      ],
+    };
+  },
+  liquidations: async () => {
+    const res = await callAPI(false, "/live/risk/liquidations/summary", { since: "24h" }, COVERAGE_CALL);
+    return {
+      dataset: "liquidations",
+      description: "Syncer-backed liquidation events and risk history (live_recent_liquidations, live_liquidation_summary, live_coin_risk_*).",
+      windowStart: null,
+      windowEnd: null,
+      latest: res?.freshness?.liquidations ?? null,
+      freshness: { availability: res?.availability ?? null, freshness: res?.freshness ?? null, generatedAt: res?.generatedAt ?? null },
+      source: "/live/risk/liquidations/summary?since=24h (availability/freshness stamp)",
+      notes: [`${NO_WINDOW_NOTE}: the risk routes accept a since/hours look-back but do not report their earliest row.`],
+    };
+  },
+  lifecycles: async () => {
+    const rows = await callAPI(false, "/pulse/lifecycles/recent", { since: "24h", limit: "1" }, COVERAGE_CALL);
+    const latest = Array.isArray(rows) && rows[0]?.closedAt ? String(rows[0].closedAt) : null;
+    return {
+      dataset: "lifecycles",
+      description: "Reconstructed position lifecycles with MAE/MFE (pulse_lifecycle*, archetype, execution-quality and market-structure tools).",
+      windowStart: null,
+      windowEnd: null,
+      latest,
+      freshness: latest ? { lastClosedAt: latest } : null,
+      source: "/pulse/lifecycles/recent?since=24h&limit=1 (latest close)",
+      notes: [
+        "Rolling window: lifecycle routes return positions closed within the last 90 days plus still-open ones.",
+        `${NO_WINDOW_NOTE}: the table's first day is not reported by any route.`,
+      ],
+    };
+  },
+  book: async () => {
+    const res = await callAPI(false, "/market/book/coverage", undefined, COVERAGE_CALL);
+    const coins = Number(res?.coins ?? 0);
+    const notes: string[] = Array.isArray(res?.notes) ? res.notes.map(String) : [];
+    return {
+      dataset: "book",
+      description: "L4 order-book rollups behind book_summary, book_stop_map, book_whales and book_levels (snapshot-derived, refreshed every 60 s, no history).",
+      // Latest-only by design: there is no window to report, and guessing one
+      // would invite an agent to ask for a range that cannot exist.
+      windowStart: null,
+      windowEnd: null,
+      latest: res?.latest_block_time ?? null,
+      freshness: {
+        coinsCovered: coins,
+        latestHeight: res?.latest_height ?? null,
+        latestBlockTime: res?.latest_block_time ?? null,
+        // The spread between oldest and latest is how far behind the
+        // slowest coin is — a lagging sweep shows up here before it shows
+        // up as staleness on any single coin.
+        oldestBlockTime: res?.oldest_block_time ?? null,
+        ageS: res?.age_s ?? null,
+        stale: res?.stale ?? null,
+      },
+      source: "/market/book/coverage",
+      notes: [
+        `${NO_WINDOW_NOTE}: the book rollups are latest-only — one row per coin, replaced on each re-export.`,
+        ...notes,
+        ...(coins ? [] : ["No coin is covered yet; the four book_* tools will answer 404 for every coin."]),
+        ...(res?.stale ? ["The source is stale: the book_* tools answer 503 until it refreshes."] : []),
+      ],
+    };
+  },
+  cohort_history: async () => ({
+    dataset: "cohort_history",
+    description: "Hourly cohort bias snapshots and daily cohort performance (pulse_cohort_bias_history, pulse_cohort_performance_daily, live_cohort_bias_history).",
+    windowStart: null,
+    windowEnd: null,
+    latest: null,
+    freshness: null,
+    source: "/pulse/cohort-bias/history, /pulse/cohorts/daily-stats (not queried; both accept since up to 30d)",
+    notes: [`${NO_WINDOW_NOTE}: the routes accept since <= 30d but do not report the earliest snapshot.`],
+  }),
+};
+
 // ─── Create Server ───────────────────────────────────────
 const SERVER_INSTRUCTIONS = `Coinversa Pulse — Crypto intelligence for AI agents.
 
 DATA COVERAGE:
 - Every tracked Hyperliquid wallet classified into behavioral cohorts (size + PnL tiers)
 - All indexed trades with full PnL attribution (for current totals call pulse_global_stats)
+- data_coverage reports, per dataset, the window start/end (or latest row), the
+  freshness stamp, and the API route it was read from. Call it before relying
+  on a historical range. Windows as the API reports them today: trades/pulse
+  from 2025-03-22 (pulse_global_stats.dataStartDate); position lifecycles are
+  a rolling 90-day window; builder ledger from the fee ledger's first on-chain
+  entry; HIP-4 from mainnet launch (2026-05-02). Several tools cap large
+  arrays and return truncated:true + totalCount + a note on how to page or narrow.
 - Real-time positions, liquidation heatmaps, and market data
 - Syncer-backed risk routes for crowding, real liquidation events, and weekly market stress
 - Cross-market asset taxonomy resolving venue symbols (xyz:GOLD, hyna:PAXG) to canonical assets
 - HIP-4 outcome contract discovery, settlements, volume, recent trades, trader analytics, and perp-position context
+- L4 order book (book_summary, book_stop_map, book_whales, book_levels): snapshot-derived,
+  refreshed every 60 s, latest-only — there is NO book history, so "how did the book change"
+  cannot be answered from these tools. Every response carries as_of_height (the L1 block) and
+  age_s. market_orderbook remains the free aggregated L2 view. Coin is case-sensitive in the
+  node's own spelling (BTC, xyz:GOLD, #28200) and is NOT normalized for these four tools.
 
 MARKETS:
 Hyperliquid has native perpetuals (BTC, ETH, SOL, etc.) plus 7 builder dexes — independent perp exchanges built on top of Hyperliquid, each with their own collateral token and market listings.
@@ -375,7 +689,14 @@ EXCHANGE AGGREGATES (v0.9):
   Builder dexes (HIP-3) are ~43% of Hyperliquid volume; most trackers'
   headline numbers count native only, so cite the by-dex split when comparing.
 
-BUILDER ANALYTICS (0.11; journey/lifecycle/heatmap/orders new in 0.11.1):
+BUILDER ANALYTICS (v0.11.1 — revenue + audience intelligence for builder-fee apps):
+Builders (frontends, bots, HIP-3 dexes) charge per-order builder fees on
+Hyperliquid. Revenue figures are EXACT, from Hyperliquid's on-chain cumulative
+builder-fee ledger; detail metrics (volume/users/fills) come from order-fill
+attribution and slightly undercount because trigger-order (stop/TP) fills are
+not yet attributed — each response's dataNotes explains, and the 'verified'
+stamp names the ledger block the data was reconciled against. builderName comes
+from a curated registry and is omitted when unknown.
 - builder_leaderboard → builders ranked by exact ledger revenue [Starter]
 - builder_profile     → one builder: revenue, daily series, top coins [Starter]
 - builder_traders     → wallets trading via a builder, with cohort tiers [Pro]
@@ -391,11 +712,15 @@ BUILDER ANALYTICS (0.11; journey/lifecycle/heatmap/orders new in 0.11.1):
 Tiers on builder_traders/builder_cohorts are ALL-TIME exchange-wide labels
 (legacy slugs), not the 30d-rolling tiers the pulse_cohort_recent_* tools use.
 
+AUTHENTICATION:
+Every tool requires a Coinversa API key (the API rejects keyless requests).
+Remote connector: authorize by connecting the Coinversa connector. Local/stdio:
+set COINVERSAA_API_KEY. Get a key at https://developers.coinversa.ai/keys.
+
 PLANS & LIMITS:
 - pulse_my_plan shows the caller's tier, limits, and every tier's limits.
-  Call it when a request is rejected for tier or rate-limit reasons, then
-  relay the specific upgrade guidance (tier-gate errors include an upgrade
-  URL).
+  If a request is rejected for tier or rate-limit reasons, call it and
+  report the caller's tier and the tier the feature requires.
 
 TIPS:
 - When a user mentions a commodity (gold, silver, oil) or stock (TSLA, AAPL), check builder dex markets with list_markets
@@ -404,7 +729,7 @@ TIPS:
 
 const server = new McpServer({
   name: "coinversaa-pulse",
-  version: "0.11.1",
+  version: COINVERSA_VERSION,
 }, {
   instructions: SERVER_INSTRUCTIONS,
 });
@@ -416,7 +741,7 @@ if (shouldRegister("pulse_global_stats")) server.registerTool(
   "pulse_global_stats",
   {
     title: "Global Stats",
-    description: "Get global Hyperliquid trading statistics: total traders, trades, volume, PnL, and data coverage period. Use this to understand the overall scale of the market.",
+    description: "Get global Hyperliquid trading statistics: total traders, trades, volume, PnL, and data coverage period. Use this to understand the overall scale of the market. dataStartDate/dataEndDate are the indexed trade window (2025-03-22 onward as of 0.11.4); data_coverage reports the window and freshness of every dataset.",
     inputSchema: { useToonFormat: useToonFormatSchema },
     annotations,
   },
@@ -426,32 +751,13 @@ if (shouldRegister("pulse_global_stats")) server.registerTool(
 // ══════════════════════════════════════════════════════════
 // TOOL 2: Market Overview                           [FREE]
 // ══════════════════════════════════════════════════════════
-if (shouldRegister("pulse_market_overview")) server.registerTool(
-  "pulse_market_overview",
-  {
-    title: "Market Overview",
-    description: "DEPRECATED alias for list_markets — returns the same payload (24h volume, open interest, mark price, funding rate, 24h change for every pair). Prefer list_markets for new integrations; this tool is kept for backward compatibility only.",
-    inputSchema: {
-      useToonFormat: useToonFormatSchema,
-      dex: z.enum(["hl", "xyz", "flx", "vntl", "hyna", "km", "abcd", "cash"]).optional().describe("Filter by dex. 'hl' for native Hyperliquid only, or a builder dex name (xyz, cash, km, etc.). Omit for all markets."),
-    },
-    annotations,
-  },
-  async ({ useToonFormat, dex }) => {
-    const params: Record<string, string> = {};
-    if (dex) params.dex = dex;
-    return toolResult(await callAPI(useToonFormat, "/pulse/market-overview", params));
-  }
-);
-
-// ══════════════════════════════════════════════════════════
 // TOOL 3: List Markets (Discovery)                  [FREE]
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("list_markets")) server.registerTool(
   "list_markets",
   {
     title: "List Markets",
-    description: "CANONICAL market discovery tool. Returns every trading symbol on Hyperliquid and its builder dexes with dex, mark price, 24h volume, funding rate, open interest, and 24h change. Use this whenever the user asks 'what markets are available?', mentions a commodity (gold, silver, oil), stock (TSLA, AAPL, NVDA), or builder-dex market. Prefer this over pulse_market_overview (same data, kept only for backward compat). For asset-level grouping across venues, use list_assets instead.",
+    description: "CANONICAL market discovery tool. Returns every trading symbol on Hyperliquid and its builder dexes with dex, mark price, 24h volume, funding rate, open interest, and 24h change. Use this whenever the user asks 'what markets are available?', mentions a commodity (gold, silver, oil), stock (TSLA, AAPL, NVDA), or builder-dex market. For asset-level grouping across venues, use list_assets instead.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       dex: z.enum(["hl", "xyz", "flx", "vntl", "hyna", "km", "abcd", "cash"]).optional().describe("Filter by dex. 'hl' for native Hyperliquid, 'xyz' for commodities/stocks, 'cash' for equities, 'km' for energy, etc. Omit for all markets."),
@@ -538,7 +844,7 @@ if (shouldRegister("pulse_leaderboard")) server.registerTool(
   "pulse_leaderboard",
   {
     title: "Trader Leaderboard",
-    description: "Get ranked trader leaderboard. Sort by PnL, win rate, volume, score, or risk-adjusted returns. Filter by time period (day/week/month/allTime) and minimum trade count. Use this to find the best traders on Hyperliquid.",
+    description: "Get ranked trader leaderboard. Sort by PnL, win rate, volume, score, or risk-adjusted returns. Filter by time period (day/week/month/allTime) and minimum trade count. Use this to find the best traders on Hyperliquid. Trade history is indexed from 2025-03-22 (pulse_global_stats.dataStartDate; see data_coverage for the current window).",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       sort: z.enum(["pnl", "winrate", "volume", "score", "risk-adjusted", "losers"]).default("pnl").describe("Sort criteria"),
@@ -714,7 +1020,7 @@ if (shouldRegister("pulse_trader_trades")) server.registerTool(
   "pulse_trader_trades",
   {
     title: "Trader Trades",
-    description: "Get recent trades for a specific wallet address. See exactly what a trader has been doing in the last minutes/hours — every buy, sell, size, price, and PnL. Essential for copy-trading and due diligence.",
+    description: "Get recent trades for a specific wallet address. See exactly what a trader has been doing in the last minutes/hours — every buy, sell, size, price, and PnL. Essential for copy-trading and due diligence. Trade history is indexed from 2025-03-22 (pulse_global_stats.dataStartDate; see data_coverage for the current window).",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       address: ethAddressSchema,
@@ -814,51 +1120,88 @@ if (shouldRegister("live_coin_risk_snapshot")) server.registerTool(
 // TOOL 17: Coin Risk History
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_coin_risk_history")) server.registerTool(
-  "live_coin_risk_history",
-  {
-    title: "Live Coin Risk History",
-    description: "Get the historical risk lane for a coin. Best for questions like 'how did this setup become fragile?' or 'did smart money rotate before the move?'. Returns hourly OI, long/short history, cohort rotation, candle data, mark/oracle dislocation history when available, and liquidation counts over time.",
-    inputSchema: {
-      useToonFormat: useToonFormatSchema,
-      coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN"),
-      hours: z.number().min(1).max(720).default(168).describe("Number of hours of history to return (default 168 = 7 days, max 720 = 30 days)"),
+    "live_coin_risk_history",
+    {
+      title: "Live Coin Risk History",
+      description: "Get the historical risk lane for a coin. Best for questions like 'how did this setup become fragile?' or 'did smart money rotate before the move?'. Returns hourly OI, long/short history, cohort rotation, candle data, and liquidation counts over time; by default the minute-level markDislocations section is omitted (it alone is ~700 rows per 12h). Pass include=[..., 'markDislocations'] to add it bucketed to 1 hour (the max-|basisPct| minute per hour), or use live_mark_dislocations for finer resolution. The response lists sections and omittedSections. Freshness and availability are in the response's freshness/availability stamps; see data_coverage for the risk-data window.",
+      inputSchema: {
+        useToonFormat: useToonFormatSchema,
+        coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN"),
+        hours: z.number().min(1).max(720).default(168).describe("Number of hours of history to return (default 168 = 7 days, max 720 = 30 days)"),
+        include: z.array(z.enum(RISK_HISTORY_SECTIONS)).min(1).optional().describe("Sections to return. Default: every section except markDislocations. markDislocations, when included, is bucketed to 1h."),
+      },
+      annotations: { ...annotations, title: "Live Coin Risk History" },
     },
-    annotations,
-  },
-  async ({ useToonFormat, coin, hours }) =>
-    toolResult(await callAPI(useToonFormat, `/live/risk/coins/${normalizeCoin(coin)}/history`, { hours: String(hours) }))
-);
+    async ({ useToonFormat, coin, hours, include }) => {
+      const history = await callAPI(false, `/live/risk/coins/${normalizeCoin(coin)}/history`, { hours: String(hours) });
+      const wanted = new Set<string>(include ?? RISK_HISTORY_DEFAULT_SECTIONS);
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(history ?? {})) {
+        if ((RISK_HISTORY_SECTIONS as readonly string[]).includes(k)) continue;
+        result[k] = v;
+      }
+      for (const section of RISK_HISTORY_SECTIONS) {
+        if (!wanted.has(section)) continue;
+        if (section === "markDislocations") {
+          const raw: any[] = Array.isArray(history?.markDislocations) ? history.markDislocations : [];
+          result.markDislocations = bucketSeries(raw, DISLOCATION_RESOLUTION_MS["1h"], (r) => r.timestamp, (r) => Math.abs(Number(r.basisPct) || 0));
+          result.markDislocationsResolution = "1h";
+          result.markDislocationsRawCount = raw.length;
+        } else {
+          result[section] = history?.[section] ?? null;
+        }
+      }
+      const omitted = RISK_HISTORY_SECTIONS.filter((sec) => !wanted.has(sec));
+      result.sections = RISK_HISTORY_SECTIONS.filter((sec) => wanted.has(sec));
+      result.omittedSections = omitted;
+      if (omitted.length > 0) {
+        result.note = `Sections omitted: ${omitted.join(", ")}. Pass include=[...] naming them to add them; markDislocations comes back bucketed to 1h (use live_mark_dislocations for 1m/5m).`;
+      }
+      return toolResult(useToonFormat ? toonEncode(result) : result);
+    }
+  );
 
 // ══════════════════════════════════════════════════════════
 // TOOL 18: Mark Dislocations
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("live_mark_dislocations")) server.registerTool(
-  "live_mark_dislocations",
-  {
-    title: "Live Mark Dislocations",
-    description: "Get historical mark/oracle dislocation data for a coin. Use this to answer questions like 'did basis stress or oracle drift show up before liquidations?'. Returns timestamped mark price, oracle price, and basis percentage over the last 30 days.",
-    inputSchema: {
-      useToonFormat: useToonFormatSchema,
-      coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN"),
-      hours: z.number().min(1).max(720).default(168).describe("Number of hours of history to return (default 168 = 7 days, max 720 = 30 days)"),
+    "live_mark_dislocations",
+    {
+      title: "Live Mark Dislocations",
+      description: "Get historical mark/oracle dislocation data for a coin. Use this to answer questions like 'did basis stress or oracle drift show up before liquidations?'. Returns timestamped mark price, oracle price, and basis percentage over the requested window — default 168 hours (7 days), max 720 hours (30 days). The source series is one row per minute; the connector buckets it by `resolution` (default 5m: the max-|basisPct| minute in each 5-minute bucket; 1h likewise; 1m = raw) and returns at most `limit` rows (default 500, newest kept), with totalCount, truncated and a note when rows were dropped. For 7 days at full detail use resolution=1h, or page by shortening hours. See data_coverage for the risk-data freshness stamp.",
+      inputSchema: {
+        useToonFormat: useToonFormatSchema,
+        coin: z.string().min(1).max(20).describe("Coin symbol (e.g. BTC, ETH, SOL). For builder dex markets use prefix:COIN"),
+        hours: z.number().min(1).max(720).default(168).describe("Number of hours of history to return (default 168 = 7 days, max 720 = 30 days)"),
+        resolution: z.enum(["1m", "5m", "1h"]).default("5m").describe("Bucket width. Each bucket keeps the minute with the largest |basisPct|. Default 5m; 1m returns the raw minute rows."),
+        limit: z.number().int().min(1).max(5000).default(500).describe("Max rows to return after bucketing (default 500). The newest rows are kept when the cap applies."),
+      },
+      annotations: { ...annotations, title: "Live Mark Dislocations" },
     },
-    annotations,
-  },
-  async ({ useToonFormat, coin, hours }) => {
-    const history = await callAPI(false, `/live/risk/coins/${normalizeCoin(coin)}/history`, { hours: String(hours) });
-    const result = {
-      success: history.success,
-      coin: history.coin,
-      hours: history.hours,
-      count: Array.isArray(history.markDislocations) ? history.markDislocations.length : 0,
-      markDislocations: history.markDislocations || [],
-      availability: history.availability,
-      freshness: history.freshness,
-      generatedAt: history.generatedAt,
-    };
-    return toolResult(useToonFormat ? toonEncode(result) : result);
-  }
-);
+    async ({ useToonFormat, coin, hours, resolution, limit }) => {
+      const history = await callAPI(false, `/live/risk/coins/${normalizeCoin(coin)}/history`, { hours: String(hours) });
+      const raw: any[] = Array.isArray(history?.markDislocations) ? history.markDislocations : [];
+      const bucketed = bucketSeries(raw, DISLOCATION_RESOLUTION_MS[resolution], (r) => r.timestamp, (r) => Math.abs(Number(r.basisPct) || 0));
+      const base = {
+        success: history?.success,
+        coin: history?.coin,
+        hours: history?.hours,
+        resolution,
+        rawCount: raw.length,
+        count: 0,
+        markDislocations: bucketed,
+        availability: history?.availability,
+        freshness: history?.freshness,
+        generatedAt: history?.generatedAt,
+      };
+      const capped = capArray(base, "markDislocations", limit, {
+        keepEnd: true,
+        note: (shown, total) => `Showing the newest ${shown} of ${total} ${resolution} rows; raise limit (max 5000), coarsen resolution (5m/1h), or shorten hours to see the rest.`,
+      });
+      capped.count = capped.markDislocations.length;
+      return toolResult(useToonFormat ? toonEncode(capped) : capped);
+    }
+  );
 
 // ══════════════════════════════════════════════════════════
 // TOOL 19: Recent Liquidations
@@ -1169,7 +1512,7 @@ if (shouldRegister("pulse_lifecycles_recent")) server.registerTool(
   "pulse_lifecycles_recent",
   {
     title: "Recent Closed Lifecycles",
-    description: "Global feed of the most recently CLOSED position lifecycles across ALL wallets — 'what just closed exchange-wide right now'. Reads the corrected position_lifecycles_full table: includes MAE/MFE (when backfilled), a liquidation flag, and optional spot. Cross-wallet successor to pulse_recent_closed_positions. Filter by coin, minNotional, hold-duration range, and time window. Note: the very freshest closes may not have MAE/MFE yet — the risk backfill lags real-time, so recent rows can show null MAE/MFE.",
+    description: "Global feed of the most recently CLOSED position lifecycles across ALL wallets — 'what just closed exchange-wide right now'. Reads the corrected position_lifecycles_full table: includes MAE/MFE (when backfilled), a liquidation flag, and optional spot. Cross-wallet successor to pulse_recent_closed_positions. Filter by coin, minNotional, hold-duration range, and time window. Note: the very freshest closes may not have MAE/MFE yet — the risk backfill lags real-time, so recent rows can show null MAE/MFE. Lifecycles are a rolling 90-day window; the table's first day is not exposed by the API — see data_coverage.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       since: sinceSchema.default("1h"),
@@ -1242,53 +1585,90 @@ if (shouldRegister("market_recent_candles")) server.registerTool(
 // TOOL 29: Cohort Bias History
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_cohort_bias_history")) server.registerTool(
-  "pulse_cohort_bias_history",
-  {
-    title: "Cohort Bias History",
-    description: "Get historical hourly bias snapshots for all trader cohorts. Returns net long/short notional and account counts per tier. Use this to see how different groups (whales, smart money) have shifted their positioning over time. Supports per-coin or global aggregate. Max range is 30 days.",
-    inputSchema: {
-      useToonFormat: useToonFormatSchema,
-      coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER). Omit for global exchange aggregate."),
-      since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '24h', '7d', '30d'"),
-      startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
-      endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+    "pulse_cohort_bias_history",
+    {
+      title: "Cohort Bias History",
+      description: "Get historical hourly bias snapshots for trader cohorts. Returns net long/short notional and account counts per tier — 32 tier rows per hour (16 PnL + 16 size tiers), so filter with tierType and/or tier for a readable series. Use this to see how different groups (whales, smart money) have shifted their positioning over time. Supports per-coin or global aggregate; the API default window is 7d, max 30d. Returns { rows, totalCount, truncated, note? } with rows newest first, capped at `limit` (default 100); when truncated, narrow with tierType/tier or a shorter since, or raise limit (max 2000). Cohort history is served for up to the last 30 days; see data_coverage.",
+      inputSchema: {
+        useToonFormat: useToonFormatSchema,
+        coin: z.string().optional().describe("Filter by coin symbol (e.g. BTC, ETH, SOL). For builder dex: prefix:COIN (e.g. xyz:SILVER). Omit for global exchange aggregate."),
+        since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '24h', '7d', '30d'"),
+        startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
+        endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+        tierType: z.enum(["pnl", "size"]).optional().describe("Keep only PnL-tier or size-tier rows (applied by the connector; halves the row count)."),
+        tier: tierSchema.optional().describe("Keep only one tier's rows (either vocabulary). Combine with tierType for a single series."),
+        limit: z.number().int().min(1).max(2000).default(100).describe("Max rows to return, newest first (default 100, max 2000)."),
+      },
+      annotations: { ...annotations, title: "Cohort Bias History" },
     },
-    annotations,
-  },
-  async ({ useToonFormat, coin, since, startTime, endTime }) => {
-    const params: Record<string, string> = {};
-    if (since) params.since = since;
-    if (startTime) params.startTime = startTime;
-    if (endTime) params.endTime = endTime;
-    if (coin) params.coin = normalizeCoin(coin);
-    return toolResult(await callAPI(useToonFormat, "/pulse/cohort-bias/history", params));
-  }
-);
+    async ({ useToonFormat, coin, since, startTime, endTime, tierType, tier, limit }) => {
+      const params: Record<string, string> = {};
+      if (since) params.since = since;
+      if (startTime) params.startTime = startTime;
+      if (endTime) params.endTime = endTime;
+      if (coin) params.coin = normalizeCoin(coin);
+      const data = await callAPI(false, "/pulse/cohort-bias/history", params);
+      const all: any[] = Array.isArray(data) ? data : Array.isArray(data?.rows) ? data.rows : [];
+      const rows = sortCohortRows(filterCohortRows(all, tierType, tier), "timestamp");
+      const base = {
+        coin: params.coin ?? "aggregate",
+        since: since ?? (startTime ? undefined : "7d"),
+        startTime,
+        endTime,
+        tierType: tierType ?? null,
+        tier: tier ? normalizeTier(tier) : null,
+        rowsBeforeFilter: all.length,
+        rows,
+      };
+      const result = capArray(base, "rows", limit, {
+        note: (shown, total) => `Showing the newest ${shown} of ${total} rows; narrow with tierType/tier or a shorter since, or raise limit (max 2000).`,
+      });
+      return toolResult(useToonFormat ? toonEncode(result) : result);
+    }
+  );
 
 // ══════════════════════════════════════════════════════════
 // TOOL 30: Cohort Daily Performance Stats
 // ══════════════════════════════════════════════════════════
 if (shouldRegister("pulse_cohort_performance_daily")) server.registerTool(
-  "pulse_cohort_performance_daily",
-  {
-    title: "Cohort Daily Performance",
-    description: "Get historical daily performance statistics for all trader cohorts. Returns PnL, volume, trade counts, and active trader counts per tier. Use this to track the consistency and profitability of different groups over time. Max range is 30 days.",
-    inputSchema: {
-      useToonFormat: useToonFormatSchema,
-      since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '7d', '14d', '30d'"),
-      startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
-      endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+    "pulse_cohort_performance_daily",
+    {
+      title: "Cohort Daily Performance",
+      description: "Get historical daily performance statistics for trader cohorts. Returns PnL, volume, trade counts, and active trader counts per tier — 32 tier rows per day, so filter with tierType and/or tier for a readable series. Use this to track the consistency and profitability of different groups over time. API default window 30d, max 30d. Returns { rows, totalCount, truncated, note? } sorted by date (newest first) then tierType and tier, capped at `limit` (default 100); when truncated, narrow with tierType/tier or a shorter since, or raise limit (max 2000). Cohort history is served for up to the last 30 days; see data_coverage.",
+      inputSchema: {
+        useToonFormat: useToonFormatSchema,
+        since: sinceSchema.optional().describe("Time window for history (max 30d). e.g. '7d', '14d', '30d'"),
+        startTime: z.string().optional().describe("Explicit start time (ISO string or timestamp). Overrides 'since'."),
+        endTime: z.string().optional().describe("Explicit end time (ISO string or timestamp). Defaults to now."),
+        tierType: z.enum(["pnl", "size"]).optional().describe("Keep only PnL-tier or size-tier rows (applied by the connector; halves the row count)."),
+        tier: tierSchema.optional().describe("Keep only one tier's rows (either vocabulary). Combine with tierType for a single series."),
+        limit: z.number().int().min(1).max(2000).default(100).describe("Max rows to return, newest date first (default 100, max 2000)."),
+      },
+      annotations: { ...annotations, title: "Cohort Daily Performance" },
     },
-    annotations,
-  },
-  async ({ useToonFormat, since, startTime, endTime }) => {
-    const params: Record<string, string> = {};
-    if (since) params.since = since;
-    if (startTime) params.startTime = startTime;
-    if (endTime) params.endTime = endTime;
-    return toolResult(await callAPI(useToonFormat, "/pulse/cohorts/daily-stats", params));
-  }
-);
+    async ({ useToonFormat, since, startTime, endTime, tierType, tier, limit }) => {
+      const params: Record<string, string> = {};
+      if (since) params.since = since;
+      if (startTime) params.startTime = startTime;
+      if (endTime) params.endTime = endTime;
+      const data = await callAPI(false, "/pulse/cohorts/daily-stats", params);
+      const all: any[] = Array.isArray(data) ? data : Array.isArray(data?.rows) ? data.rows : [];
+      const rows = sortCohortRows(filterCohortRows(all, tierType, tier), "date");
+      const base = {
+        since: since ?? (startTime ? undefined : "30d"),
+        startTime,
+        endTime,
+        tierType: tierType ?? null,
+        tier: tier ? normalizeTier(tier) : null,
+        rowsBeforeFilter: all.length,
+        rows,
+      };
+      const result = capArray(base, "rows", limit, {
+        note: (shown, total) => `Showing the newest ${shown} of ${total} rows; narrow with tierType/tier or a shorter since, or raise limit (max 2000).`,
+      });
+      return toolResult(useToonFormat ? toonEncode(result) : result);
+    }
+  );
 
 // ══════════════════════════════════════════════════════════
 // TOOL 37: Open Interest History
@@ -1374,20 +1754,28 @@ const outcomeIdSchema = z
   .min(0)
   .describe("HIP-4 outcome ID. Side-token coins are encoded as #<10*outcomeId+side>.");
 
-if (shouldRegister("hip4_outcomes")) server.registerTool(
-  "hip4_outcomes",
-  {
-    title: "HIP-4 Outcomes",
-    description: "List active HIP-4 outcome contracts that traded recently. Returns outcome IDs, question metadata when available, side tokens, fills, unique wallets, notional USDH, and first/last traded timestamps. Use when users ask what prediction/outcome markets are active.",
-    inputSchema: {
-      useToonFormat: useToonFormatSchema,
-      hours: z.number().int().min(1).max(168).default(24).describe("Look-back window in hours. Default 24, max 168."),
+if (shouldRegister("hip4_outcomes")) server.registerTool("hip4_outcomes",
+    {
+      title: "HIP-4 Outcomes",
+      description: "List active HIP-4 outcome contracts that traded recently. Returns outcome IDs, question metadata when available, side tokens, fills, unique wallets, notional USDH, and first/last traded timestamps. Use when users ask what prediction/outcome markets are active. Outcomes are sorted by notionalUsdh descending and capped at `limit` (default 25, max 200; the API route has no paging, so the cap is applied by the connector) — the response carries count (returned), totalCount, truncated and a note; raise limit or shorten hours to see more. HIP-4 fills are indexed from mainnet launch (2026-05-02; the API clamps every look-back to it) — see data_coverage for freshness.",
+      inputSchema: {
+        useToonFormat: useToonFormatSchema,
+        hours: z.number().int().min(1).max(168).default(24).describe("Look-back window in hours. Default 24, max 168."),
+        limit: z.number().int().min(1).max(200).default(25).describe("Max outcomes to return, largest notionalUsdh first (default 25, max 200)."),
+      },
+      annotations: { ...annotations, title: "HIP-4 Outcomes" },
     },
-    annotations,
-  },
-  async ({ useToonFormat, hours }) =>
-    toolResult(await callAPI(useToonFormat, "/hip4/outcomes", { hours: String(hours) }))
-);
+    async ({ useToonFormat, hours, limit }) => {
+      const data = await callAPI(false, "/hip4/outcomes", { hours: String(hours) });
+      const outcomes: any[] = Array.isArray(data?.outcomes) ? [...data.outcomes] : [];
+      outcomes.sort((a, b) => (Number(b?.notionalUsdh) || 0) - (Number(a?.notionalUsdh) || 0));
+      const result = capArray({ ...(data ?? {}), hours, outcomes }, "outcomes", limit, {
+        note: (shown, total) => `Showing the top ${shown} of ${total} outcomes by notionalUsdh; raise limit (max 200) or shorten hours to see more.`,
+      });
+      result.count = result.outcomes.length;
+      return toolResult(useToonFormat ? toonEncode(result) : result);
+    }
+  );
 
 if (shouldRegister("hip4_outcome")) server.registerTool(
   "hip4_outcome",
@@ -1473,7 +1861,7 @@ if (shouldRegister("hip4_daily_volume")) server.registerTool(
   "hip4_daily_volume",
   {
     title: "HIP-4 Daily Volume",
-    description: "Get daily HIP-4 volume trajectory: fills, unique trades, unique wallets, contracts, and notional USDH by day. Use for outcome-market activity trends.",
+    description: "Get daily HIP-4 volume trajectory: fills, unique trades, unique wallets, contracts, and notional USDH by day. Use for outcome-market activity trends. HIP-4 fills are indexed from mainnet launch (2026-05-02; the API clamps every look-back to it) — see data_coverage for freshness.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       days: z.number().int().min(1).max(60).default(14).describe("Number of days back from today. Default 14, max 60."),
@@ -1523,20 +1911,30 @@ if (shouldRegister("hip4_top_traders")) server.registerTool(
 );
 
 if (shouldRegister("hip4_trader_outcomes")) server.registerTool(
-  "hip4_trader_outcomes",
-  {
-    title: "HIP-4 Trader Outcomes",
-    description: "Get one wallet's HIP-4 outcome history: outcome ID, side index, side token, fills, net shares, gross bought/sold USDH, realized PnL, and first/last traded. Requires a Starter-or-higher key.",
-    inputSchema: {
-      useToonFormat: useToonFormatSchema,
-      address: ethAddressSchema,
-      days: z.number().int().min(1).max(365).default(30).describe("Look-back window in days. Default 30, max 365."),
+    "hip4_trader_outcomes",
+    {
+      title: "HIP-4 Trader Outcomes",
+      description: "Get one wallet's HIP-4 outcome history: outcome ID, side index, side token, fills, net shares, gross bought/sold USDH, realized PnL, and first/last traded. Requires a Starter-or-higher key. Rows are sorted by gross notional (grossBoughtUsdh + grossSoldUsdh) descending and capped at `limit` (default 50, max 200; the API route has no paging, so the cap is applied by the connector) — the response carries count (returned), totalCount, truncated and a note; raise limit or shorten days to see more. The API clamps days to 90 and to HIP-4 mainnet launch (2026-05-02) — see data_coverage.",
+      inputSchema: {
+        useToonFormat: useToonFormatSchema,
+        address: ethAddressSchema,
+        days: z.number().int().min(1).max(365).default(30).describe("Look-back window in days. Default 30; the API clamps values above 90."),
+        limit: z.number().int().min(1).max(200).default(50).describe("Max outcome rows to return, largest gross notional first (default 50, max 200)."),
+      },
+      annotations: { ...annotations, title: "HIP-4 Trader Outcomes" },
     },
-    annotations,
-  },
-  async ({ useToonFormat, address, days }) =>
-    toolResult(await callAPI(useToonFormat, `/hip4/trader/${address}/outcomes`, { days: String(days) }))
-);
+    async ({ useToonFormat, address, days, limit }) => {
+      const data = await callAPI(false, `/hip4/trader/${address}/outcomes`, { days: String(days) });
+      const notional = (o: any) => (Number(o?.grossBoughtUsdh) || 0) + (Number(o?.grossSoldUsdh) || 0);
+      const outcomes: any[] = Array.isArray(data?.outcomes) ? [...data.outcomes] : [];
+      outcomes.sort((a, b) => notional(b) - notional(a));
+      const result = capArray({ ...(data ?? {}), days, outcomes }, "outcomes", limit, {
+        note: (shown, total) => `Showing the top ${shown} of ${total} outcome rows by gross notional; raise limit (max 200) or shorten days to see more.`,
+      });
+      result.count = result.outcomes.length;
+      return toolResult(useToonFormat ? toonEncode(result) : result);
+    }
+  );
 
 if (shouldRegister("hip4_cross_product_overlap")) server.registerTool(
   "hip4_cross_product_overlap",
@@ -1582,7 +1980,7 @@ if (shouldRegister("pulse_trader_lifecycles")) server.registerTool(
   "pulse_trader_lifecycles",
   {
     title: "Trader Position Lifecycles",
-    description: "Get a wallet's position lifecycle history — every open->close cycle reconstructed from on-chain fills, with entry/exit VWAP, peak size, hold duration, realized PnL, fees, fill count, and liquidation status. Richer than closed-positions: each row is a full position lifecycle. 90-day rolling window; spot (@-prefixed) excluded by default. Use for deep position-level due diligence and timing analysis.",
+    description: "Get a wallet's position lifecycle history — every open->close cycle reconstructed from on-chain fills, with entry/exit VWAP, peak size, hold duration, realized PnL, fees, fill count, and liquidation status. Richer than closed-positions: each row is a full position lifecycle. 90-day rolling window (closed within the last 90 days, plus open ones; the table's first day is not exposed by the API — see data_coverage); spot (@-prefixed) excluded by default. Use for deep position-level due diligence and timing analysis.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       address: ethAddressSchema,
@@ -1629,19 +2027,28 @@ if (shouldRegister("pulse_trader_lifecycle_summary")) server.registerTool(
 
 // ─── Single Lifecycle by ID (+ composing fills) ───────────
 if (shouldRegister("pulse_lifecycle")) server.registerTool(
-  "pulse_lifecycle",
-  {
-    title: "Position Lifecycle Details",
-    description: "Look up one position lifecycle by its numeric ID, including every trade fill that composed it (timestamp, side, size, price, PnL, fee, tx hash) joined from the trades table within the open->close window. Use after pulse_trader_lifecycles to drill into exactly how a single position was built and unwound.",
-    inputSchema: {
-      useToonFormat: useToonFormatSchema,
-      id: z.number().int().min(1).describe("Lifecycle ID (from pulse_trader_lifecycles)."),
+    "pulse_lifecycle",
+    {
+      title: "Position Lifecycle Details",
+      description: "Look up one position lifecycle by its numeric ID, including the trade fills that composed it (timestamp, side, size, price, PnL, fee, tx hash) joined from the trades table within the open->close window. Use after pulse_trader_lifecycles to drill into exactly how a single position was built and unwound. Fills are paged by the connector: fillsLimit (default 100, max 1000) and fillsOffset; the response carries fillCount (total fills in the lifecycle), fillsOffset, truncated and a note with the next offset. Lifecycles are a rolling 90-day window (closed within the last 90 days, plus open ones); see data_coverage.",
+      inputSchema: {
+        useToonFormat: useToonFormatSchema,
+        id: z.number().int().min(1).describe("Lifecycle ID (from pulse_trader_lifecycles)."),
+        fillsLimit: z.number().int().min(1).max(1000).default(100).describe("Max fills to return in this page (default 100, max 1000)."),
+        fillsOffset: z.number().int().min(0).default(0).describe("Fills to skip, for paging (default 0)."),
+      },
+      annotations: { ...annotations, title: "Position Lifecycle Details" },
     },
-    annotations,
-  },
-  async ({ useToonFormat, id }) =>
-    toolResult(await callAPI(useToonFormat, `/pulse/lifecycle/${id}`))
-);
+    async ({ useToonFormat, id, fillsLimit, fillsOffset }) => {
+      const data = await callAPI(false, `/pulse/lifecycle/${id}`);
+      const result = capArray(data ?? {}, "fills", fillsLimit, {
+        offset: fillsOffset,
+        note: (shown, total) => `Showing fills ${fillsOffset + 1}-${fillsOffset + shown} of ${total}; page with fillsOffset=${fillsOffset + shown} or raise fillsLimit (max 1000).`,
+      });
+      const paged = { ...result, fillCount: result.totalCount, fillsOffset };
+      return toolResult(useToonFormat ? toonEncode(paged) : paged);
+    }
+  );
 
 // ─── Trader Demo / Quick Brief ───────────────────────────
 if (shouldRegister("pulse_trader_demo")) server.registerTool(
@@ -2210,7 +2617,7 @@ if (shouldRegister("builder_leaderboard")) server.registerTool(
   "builder_leaderboard",
   {
     title: "Builder Leaderboard",
-    description: "Builders (HIP-3 dexes, frontends, bots) ranked by exact revenue from Hyperliquid's on-chain cumulative builder-fee ledger over the requested period. Each row carries join-attributed fill volume, distinct users, and fill counts — plus the same metrics for the immediately preceding window for deltas — the builder's most common requested fee rate over the last 7d of orders (feeTenthsBp, tenths of a basis point), and builderName from a curated registry (omitted when unknown). Attributed metrics slightly undercount versus ledger revenue because trigger-order fills (stop/TP) are not yet attributed — see the response's dataNotes; the 'verified' stamp gives the ledger block this data was reconciled against. Use for 'which builders earn the most?' or 'is builder X growing?'. Requires Starter tier or higher.",
+    description: "Builders (HIP-3 dexes, frontends, bots) ranked by exact revenue from Hyperliquid's on-chain cumulative builder-fee ledger over the requested period. Each row carries join-attributed fill volume, distinct users, and fill counts — plus the same metrics for the immediately preceding window for deltas — the builder's most common requested fee rate over the last 7d of orders (feeTenthsBp, tenths of a basis point), and builderName from a curated registry (omitted when unknown). Attributed metrics slightly undercount versus ledger revenue because trigger-order fills (stop/TP) are not yet attributed — see the response's dataNotes; the 'verified' stamp gives the ledger block this data was reconciled against. Use for 'which builders earn the most?' or 'is builder X growing?'. Ledger history begins at the fee ledger's first on-chain entry: dataNotes states that date whenever a window predates it, and data_coverage (builder_ledger) reports it. Requires Starter tier or higher.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       period: builderPeriodSchema.default("week").describe("Ranking window: day, week, or month. Prev-window deltas cover the same-length window immediately before."),
@@ -2228,7 +2635,7 @@ if (shouldRegister("builder_profile")) server.registerTool(
   "builder_profile",
   {
     title: "Builder Profile",
-    description: "Single-builder overview for a 0x-hex builder address: exact revenue from Hyperliquid's on-chain builder-fee ledger over the period (day/week/month), first/last fee accrual timestamps, distinct fee tokens, most common requested fee rate over the last 7d of orders (feeTenthsBp, tenths of a basis point), a daily attributed series (fees/volume/users/fills) with the biggest day highlighted, top coins by attributed volume, and how many of the period's attributed wallets are all-time profitable. Attributed metrics slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes); builderName comes from a curated registry, omitted when unknown. Returns 404 for addresses with no revenue in the fee ledger. Use for 'how is builder X doing?' or 'what do people trade on frontend Y?'. Requires Starter tier or higher.",
+    description: "Single-builder overview for a 0x-hex builder address: exact revenue from Hyperliquid's on-chain builder-fee ledger over the period (day/week/month), first/last fee accrual timestamps, distinct fee tokens, most common requested fee rate over the last 7d of orders (feeTenthsBp, tenths of a basis point), a daily attributed series (fees/volume/users/fills) with the biggest day highlighted, top coins by attributed volume, and how many of the period's attributed wallets are all-time profitable. Attributed metrics slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes); builderName comes from a curated registry, omitted when unknown. Returns 404 for addresses with no revenue in the fee ledger. Use for 'how is builder X doing?' or 'what do people trade on frontend Y?'. Requires Starter tier or higher. Availability: typically 10-25 seconds on large builders; the coin split (topCoins) may come back null with an explanation in dataNotes when the live pass exceeds its budget. Ledger history begins at the fee ledger's first on-chain entry (see data_coverage, builder_ledger).",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       builder: builderAddressSchema,
@@ -2246,7 +2653,7 @@ if (shouldRegister("builder_traders")) server.registerTool(
   "builder_traders",
   {
     title: "Builder Traders",
-    description: "Wallets that traded via a builder (0x-hex address) in the window, sortable by builder fees paid, volume, or realized PnL. Each row: wallet, realized PnL on its attributed fills, builderFeesUsd, volumeUsd, fills, latest equity (0 if untracked), and the wallet's ALL-TIME exchange-wide cohort tiers (pnlTier/sizeTier, emitted as legacy slugs like smart_money/whale; null if untracked) — lifetime labels, unlike the 30d-rolling tiers the pulse cohort tools classify by, so memberships can differ. Attributed fills slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes). Use for 'who are builder X's biggest fee payers?' or 'are smart-money wallets using this frontend?'. Requires Pro tier.",
+    description: "Wallets that traded via a builder (0x-hex address) in the window, sortable by builder fees paid, volume, or realized PnL. Each row: wallet, realized PnL on its attributed fills, builderFeesUsd, volumeUsd, fills, latest equity (0 if untracked), and the wallet's ALL-TIME exchange-wide cohort tiers (pnlTier/sizeTier, emitted as legacy slugs like smart_money/whale; null if untracked) — lifetime labels, unlike the 30d-rolling tiers the pulse cohort tools classify by, so memberships can differ. Attributed fills slightly undercount versus ledger revenue (trigger-order stop/TP fills not yet attributed — see the response's dataNotes). Use for 'who are builder X's biggest fee payers?' or 'are smart-money wallets using this frontend?'. Requires Pro tier. Availability: this endpoint computes per builder on request and can exceed its 30-second budget on large builders; if it times out, retry once a minute later.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       builder: builderAddressSchema,
@@ -2291,7 +2698,7 @@ if (shouldRegister("builder_cohorts")) server.registerTool(
   "builder_cohorts",
   {
     title: "Builder Cohorts",
-    description: "Cohort composition of a builder's attributed users over the period (day/week/month): split by all-time exchange-wide profitability tier (pnlTiers) and size tier (sizeTiers), largest cohort first, each with users, share of totalUsers, builder fees paid, attributed volume, realized PnL, and fills. Tiers are LIFETIME labels emitted as legacy slugs (money_printer..giga_rekt / leviathan..shrimp) — not the 30d-rolling tiers the pulse cohort tools use — and wallets missing from the rollup appear under 'untracked' so per-tier user counts always sum to totalUsers. Attribution slightly undercounts versus ledger revenue (trigger-order fills — see the response's dataNotes). Use for 'is builder X's user base smart money or exit liquidity?' or 'do whales or shrimp pay most of its fees?'. Requires Pro tier.",
+    description: "Cohort composition of a builder's attributed users over the period (day/week/month): split by all-time exchange-wide profitability tier (pnlTiers) and size tier (sizeTiers), largest cohort first, each with users, share of totalUsers, builder fees paid, attributed volume, realized PnL, and fills. Tiers are LIFETIME labels emitted as legacy slugs (money_printer..giga_rekt / leviathan..shrimp) — not the 30d-rolling tiers the pulse cohort tools use — and wallets missing from the rollup appear under 'untracked' so per-tier user counts always sum to totalUsers. Attribution slightly undercounts versus ledger revenue (trigger-order fills — see the response's dataNotes). Use for 'is builder X's user base smart money or exit liquidity?' or 'do whales or shrimp pay most of its fees?'. Requires Pro tier. Availability: computed per builder on request and can exceed its 30-second budget on large builders; if it times out, retry once a minute later.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       builder: builderAddressSchema,
@@ -2358,7 +2765,7 @@ if (shouldRegister("builder_journey")) server.registerTool(
   "builder_journey",
   {
     title: "Builder Journey",
-    description: "How fast and how unevenly a builder monetizes the wallets it acquires (takes only the 0x-hex builder address — no other parameters): users and minFills, avgRevenueUsd and medianRevenueUsd of lifetime attributed builder fees per qualifying wallet, concentration (avg/median — 1 = evenly spread, higher = whale-skewed, 0 when the median is 0), daysToPeak, daysToHalfRevenue and daysToThreeQuartersRevenue as {avgDays, medianDays} measured from each wallet's first attributed fill to its single highest-revenue day and to 50% and 75% of its lifetime fees, and peakDayDistribution bucketing those wallets into under7d, from7To30d and over30d. NOT the lifetime user base builder_lifecycle covers: the universe is the TRAILING-YEAR acquisition cohort — wallets whose first builder-fee order via this builder fell within the last 365 days, with at least minFills (fixed at 3) lifetime attributed fills — computed per wallet then aggregated, so young cohorts' truncated series bias the day counts low; see the response's dataNotes. Use for 'how fast and how unevenly does builder X monetize a new user?'. Requires Pro tier. The first call for a builder can take up to ~90 seconds while the API computes it; the result is then cached, so repeat the call if it times out.",
+    description: "How fast and how unevenly a builder monetizes the wallets it acquires (takes only the 0x-hex builder address — no other parameters): users and minFills, avgRevenueUsd and medianRevenueUsd of lifetime attributed builder fees per qualifying wallet, concentration (avg/median — 1 = evenly spread, higher = whale-skewed, 0 when the median is 0), daysToPeak, daysToHalfRevenue and daysToThreeQuartersRevenue as {avgDays, medianDays} measured from each wallet's first attributed fill to its single highest-revenue day and to 50% and 75% of its lifetime fees, and peakDayDistribution bucketing those wallets into under7d, from7To30d and over30d. NOT the lifetime user base builder_lifecycle covers: the universe is the TRAILING-YEAR acquisition cohort — wallets whose first builder-fee order via this builder fell within the last 365 days, with at least minFills (fixed at 3) lifetime attributed fills — computed per wallet then aggregated, so young cohorts' truncated series bias the day counts low; see the response's dataNotes. Use for 'how fast and how unevenly does builder X monetize a new user?'. Requires Pro tier.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       builder: builderAddressSchema,
@@ -2374,7 +2781,7 @@ if (shouldRegister("builder_lifecycle")) server.registerTool(
   "builder_lifecycle",
   {
     title: "Builder Lifecycle",
-    description: "Where every wallet that ever traded via this builder stands today (takes only the 0x-hex builder address — no other parameters): totalUsers split into five MUTUALLY EXCLUSIVE statuses that sum back to it, each {users, share} — active (attributed fill via THIS builder within 7d), cooling (within 30d but not 7d), switched (no fill here in 30d but at least one via a DIFFERENT builder in that window, detectable only with all-builder attribution), dormant (no fill via any builder in 30d, last fill here within 90d) and movedOn (no fill anywhere in 30d and none here in 90d) — plus trueRetention ((active+cooling)/totalUsers), churn ((dormant+movedOn)/totalUsers) and competitiveLoss (switched/totalUsers), which sum to 1, and competitiveLossFeesUsd, the builder fees those switched wallets paid to OTHER builders in the last 30d. LIFETIME universe on the ORDERS plane — every wallet that ever placed a builder-fee order via this builder, including ones whose orders never filled (they land in movedOn, or in switched if they filled via a DIFFERENT builder in the last 30d) — with only the status test reading recent attributed fills, so this is one snapshot of the whole historical user base rather than builder_retention's per-cohort monthly grid; see the response's dataNotes. Use for 'how many of builder X's users are still active, and how many did a rival take?'. Requires Pro tier.",
+    description: "Where every wallet that ever traded via this builder stands today (takes only the 0x-hex builder address — no other parameters): totalUsers split into five MUTUALLY EXCLUSIVE statuses that sum back to it, each {users, share} — active (attributed fill via THIS builder within 7d), cooling (within 30d but not 7d), switched (no fill here in 30d but at least one via a DIFFERENT builder in that window, detectable only with all-builder attribution), dormant (no fill via any builder in 30d, last fill here within 90d) and movedOn (no fill anywhere in 30d and none here in 90d) — plus trueRetention ((active+cooling)/totalUsers), churn ((dormant+movedOn)/totalUsers) and competitiveLoss (switched/totalUsers), which sum to 1, and competitiveLossFeesUsd, the builder fees those switched wallets paid to OTHER builders in the last 30d. LIFETIME universe on the ORDERS plane — every wallet that ever placed a builder-fee order via this builder, including ones whose orders never filled (they land in movedOn, or in switched if they filled via a DIFFERENT builder in the last 30d) — with only the status test reading recent attributed fills, so this is one snapshot of the whole historical user base rather than builder_retention's per-cohort monthly grid; see the response's dataNotes. Use for 'how many of builder X's users are still active, and how many did a rival take?'. Requires Pro tier. Availability: typically 1-15 seconds; can exceed its 30-second budget on the largest builders, in which case retry once a minute later.",
     inputSchema: {
       useToonFormat: useToonFormatSchema,
       builder: builderAddressSchema,
@@ -2416,6 +2823,145 @@ if (shouldRegister("builder_orders")) server.registerTool(
   },
   async ({ useToonFormat, builder, period }) =>
     toolResult(await callAPI(useToonFormat, `/builders/${builder}/orders`, { period }))
+);
+
+// ─── L4 order book [PRO] ───────────────────────────
+const BOOK_SHARED_NOTE =
+  "Snapshot-derived: refreshed every 60 s, latest-only (no history), and `as_of_height` is the L1 block the answer is true at — check `age_s` before citing it. `market_orderbook` remains the aggregated L2 view; this is the L4 one. Coin is case-sensitive in the node's own spelling (BTC, xyz:GOLD, #28200) and is passed through unchanged — 'btc' will 404. Pro tier.";
+
+const bookCoinSchema = z
+  .string()
+  .min(1)
+  .max(40)
+  .describe("Coin in the node's own spelling, CASE-SENSITIVE: BTC, HYPE, xyz:GOLD, cash:TSLA, #28200. Not normalized — 'btc' returns 404. Use list_markets to discover exact spellings. Spot pairs (names containing '/', e.g. PURR/USDC) are not addressable on this route.");
+
+const bookPath = (kind: string, coin: string) => `/market/book/${kind}/${encodeURIComponent(coin)}`;
+
+if (shouldRegister("book_summary")) server.registerTool(
+  "book_summary",
+  {
+    title: "Order Book Summary (L4)",
+    description:
+      "Answers: how deep and how lopsided is this book right now? Returns touch prices, spread in bps, and per side the size / order count / distinct wallet count within 0.5, 1, 2, 5 and 10 % of mid (nested bands, not rings), plus near- and far-band imbalance, the number of orders resting at the touch, their median age, and the share of them that are post-only. Example: 'is HYPE's bid side thinner than its ask side inside 1 %?' — book_summary('HYPE') and compare bid.bands vs ask.bands. " +
+      BOOK_SHARED_NOTE,
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      coin: bookCoinSchema,
+    },
+    annotations: { ...annotations, title: "Order Book Summary (L4)" },
+  },
+  async ({ useToonFormat, coin }) => toolResult(await callAPI(useToonFormat, bookPath("summary", coin)))
+);
+
+if (shouldRegister("book_stop_map")) server.registerTool(
+  "book_stop_map",
+  {
+    title: "Order Book Stop Map (L4)",
+    description:
+      "Answers: where are the stops, and how much size fires if price gets there? Buckets every untriggered stop / take-profit order by distance from mid in 0.25 % steps, out to `within_pct`, reporting per bucket the count, size, reduce-only share, stop vs take-profit split and side split — plus totals below and above mid, the nearest trigger each side, and how many sit beyond the window. Example: 'what is stacked under BTC within 2 %?' — book_stop_map('BTC', within_pct=2) and read totals_below plus the negative buckets. Note totals_below / totals_above / nearest_* always cover EVERY trigger on the coin, while `buckets` is the `within_pct` window. " +
+      BOOK_SHARED_NOTE,
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      coin: bookCoinSchema,
+      within_pct: z.number().int().min(1).max(10).default(10).describe("Half-width of the bucketed window, in percent of mid. The stored map always covers ±10 %; this slices it."),
+    },
+    annotations: { ...annotations, title: "Order Book Stop Map (L4)" },
+  },
+  async ({ useToonFormat, coin, within_pct }) =>
+    toolResult(await callAPI(useToonFormat, bookPath("stops", coin), { within_pct: String(within_pct) }))
+);
+
+if (shouldRegister("book_whales")) server.registerTool(
+  "book_whales",
+  {
+    title: "Order Book Whales (L4)",
+    description:
+      "Answers: who is sitting on this book, and where? Returns the largest resting orders (wallet, side, price, size, original size, distance from mid, tif, order type, how long it has rested) and the biggest wallets per side by total resting size. Example: 'is one wallet holding up the ETH bid?' — book_whales('ETH', limit=10) and check whether bid_wallets[0].size dominates. Wallet addresses join to the trader tools (pulse_trader_profile, pulse_trader_performance). " +
+      BOOK_SHARED_NOTE,
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      coin: bookCoinSchema,
+      limit: z.number().int().min(1).max(50).default(20).describe("How many orders and how many wallets per side to return."),
+    },
+    annotations: { ...annotations, title: "Order Book Whales (L4)" },
+  },
+  async ({ useToonFormat, coin, limit }) =>
+    toolResult(await callAPI(useToonFormat, bookPath("whales", coin), { limit: String(limit) }))
+);
+
+if (shouldRegister("book_levels")) server.registerTool(
+  "book_levels",
+  {
+    title: "Order Book Levels (L4)",
+    description:
+      "Answers: what does the depth ladder look like, with the detail L2 throws away? The top price levels per side, best-first, each with total size, order count, DISTINCT WALLET count and the age of the oldest order on it — so a level held by one wallet's single order is distinguishable from the same size spread across twenty. Example: 'is SOL's 3rd bid level real depth or one wallet?' — book_levels('SOL', depth=5) and read bids[2].wallets. " +
+      BOOK_SHARED_NOTE,
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      coin: bookCoinSchema,
+      depth: z.number().int().min(1).max(100).default(50).describe("Price levels returned per side."),
+    },
+    annotations: { ...annotations, title: "Order Book Levels (L4)" },
+  },
+  async ({ useToonFormat, coin, depth }) =>
+    toolResult(await callAPI(useToonFormat, bookPath("levels", coin), { depth: String(depth) }))
+);
+
+// ─── Data coverage ─────────────────────────────────
+if (shouldRegister("data_coverage")) server.registerTool(
+  "data_coverage",
+  {
+    title: "Data Coverage",
+    description: "Report the data window (start/end or latest row) and freshness stamp of each dataset behind this server, with the API route each figure came from — check window and freshness before relying on a historical range or citing a date. Datasets: trades (indexed trade history, /pulse/stats), builder_ledger (fee ledger + attribution coverage), census (chain-state stamp), hip4 (latest outcome fill), liquidations (risk-route availability/freshness), lifecycles (latest close; rolling 90-day window), cohort_history, book (L4 order-book rollups: coins covered, latest L1 height/time and age; snapshot-derived, refreshed every 60 s, no history). Where the API exposes no window start the dataset is listed with windowStart null and a note; no date is guessed. Sources are queried sequentially (the API's per-key burst allowance is small) and a failing source is reported in that dataset's notes rather than failing the call. Also returns server { version, hiddenTools, toolCount }. Free tier (some sources need a higher tier and then report the tier gate in notes).",
+    inputSchema: {
+      useToonFormat: useToonFormatSchema,
+      dataset: z.enum(COVERAGE_DATASETS).optional().describe("Narrow to one dataset. Omit for all."),
+    },
+    annotations: { ...annotations, title: "Data Coverage" },
+  },
+  async ({ useToonFormat, dataset }) => {
+    const wanted: CoverageDataset[] = dataset ? [dataset] : [...COVERAGE_DATASETS];
+    // Sequential on purpose: the API's per-key burst allowance is 5 (Pro)
+    // and 2 (Free), so fanning the sources out in parallel gets some of
+    // them 429'd on exactly the keys reviewers use. Each source is a
+    // cached sub-second route, so the serial cost is ~1-2 s total.
+    const settled: PromiseSettledResult<CoverageRow>[] = [];
+    for (const [i, d] of wanted.entries()) {
+      if (i > 0) await new Promise((r) => setTimeout(r, COVERAGE_PACE_MS));
+      try {
+        settled.push({ status: "fulfilled", value: await coverageSources[d]() });
+      } catch (reason) {
+        settled.push({ status: "rejected", reason });
+      }
+    }
+    const datasets = settled.map((r, i) => {
+      if (r.status === "fulfilled") return r.value;
+      const message = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      const row: CoverageRow = {
+        dataset: wanted[i],
+        description: "",
+        windowStart: null,
+        windowEnd: null,
+        latest: null,
+        freshness: null,
+        source: "",
+        error: message,
+        notes: [`source error: ${message}`],
+      };
+      return row;
+    });
+    const result = {
+      generatedAt: new Date().toISOString(),
+      datasets,
+      server: {
+        version: COINVERSA_VERSION,
+        hiddenTools: [...hiddenTools].sort(),
+        toolCount: COINVERSA_TOTAL_TOOL_COUNT,
+        advertisedToolCount: COINVERSA_TOTAL_TOOL_COUNT - hiddenTools.size,
+      },
+    };
+    return toolResult(useToonFormat ? toonEncode(result) : result);
+  },
 );
 
 return server;

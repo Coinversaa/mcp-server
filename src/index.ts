@@ -5,7 +5,7 @@
 //   COINVERSAA_API_KEY=... npx @coinversaa/mcp-server
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createCoinversaServer, COINVERSA_TOTAL_TOOL_COUNT } from "./coinversaServer.js";
+import { createCoinversaServer, COINVERSA_TOTAL_TOOL_COUNT, hiddenToolsFromEnv } from "./coinversaServer.js";
 
 async function main() {
   const apiKey = process.env.COINVERSAA_API_KEY?.trim();
@@ -23,7 +23,7 @@ async function main() {
   await server.connect(transport);
 
   console.error(
-    `Coinversa Pulse MCP server running on stdio (${COINVERSA_TOTAL_TOOL_COUNT} tools registered; backend enforces API-key tier)`
+    `Coinversa Pulse MCP server running on stdio (${COINVERSA_TOTAL_TOOL_COUNT - hiddenToolsFromEnv().size} tools available${hiddenToolsFromEnv().size > 0 ? `, ${hiddenToolsFromEnv().size} withheld by COINVERSAA_HIDDEN_TOOLS` : ""}; backend enforces API-key tier)`
   );
 }
 
