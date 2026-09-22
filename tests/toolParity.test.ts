@@ -18,10 +18,14 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createCoinversaServer, COINVERSA_TOTAL_TOOL_COUNT } from "../src/coinversaServer.js";
+import { createCoinversaServer, COINVERSA_TOTAL_TOOL_COUNT, hiddenToolsFromEnv } from "../src/coinversaServer.js";
 import hostedSnapshot from "./fixtures/hosted-tools.json";
 
-const EXPECTED_TOOL_COUNT = 103;
+// What a client actually sees: the registered universe minus the tools the
+// package withholds by default. The hosted connector applies the same gate,
+// so the snapshot in fixtures/ is an advertised list, not a registered one.
+const REGISTERED_TOOL_COUNT = 107;
+const EXPECTED_TOOL_COUNT = REGISTERED_TOOL_COUNT - hiddenToolsFromEnv(undefined).size;
 
 interface HostedTool {
   title: string;
@@ -67,7 +71,7 @@ describe("tool parity with the hosted connector", () => {
 
   test(`hosted reference lists exactly ${EXPECTED_TOOL_COUNT} tools`, () => {
     expect(hostedNames.length).toBe(EXPECTED_TOOL_COUNT);
-    expect(COINVERSA_TOTAL_TOOL_COUNT).toBe(EXPECTED_TOOL_COUNT);
+    expect(COINVERSA_TOTAL_TOOL_COUNT).toBe(REGISTERED_TOOL_COUNT);
   });
 
   test(`stdio server registers exactly ${EXPECTED_TOOL_COUNT} tools with identical names`, async () => {
@@ -108,10 +112,22 @@ describe("tool parity with the hosted connector", () => {
     expect(mismatches).toEqual([]);
   });
 
-  test("the four 0.11.1 builder tools are present", async () => {
+  test("the 0.11.1 builder tools are still advertised, except the withheld one", async () => {
     const names = new Set((await listStdioTools()).map((t) => t.name));
-    for (const name of ["builder_journey", "builder_lifecycle", "builder_heatmap", "builder_orders"]) {
+    for (const name of ["builder_journey", "builder_lifecycle", "builder_orders"]) {
       expect(names.has(name)).toBe(true);
     }
+    // builder_heatmap shipped advertised in 0.11.1 and is withheld from 0.12.0
+    // on: its upstream cannot answer inside the client timeout until the hourly
+    // rollup is backfilled. It is still registered — setting COINVERSAA_HIDDEN_TOOLS
+    // brings it back without a release, which is the whole point of the gate.
+    expect(names.has("builder_heatmap")).toBe(false);
+    expect(hiddenToolsFromEnv(undefined).has("builder_heatmap")).toBe(true);
+  });
+
+  test("COINVERSAA_HIDDEN_TOOLS overrides the default in both directions", async () => {
+    expect(hiddenToolsFromEnv("").size).toBe(0);
+    expect([...hiddenToolsFromEnv("a, b ,")].sort()).toEqual(["a", "b"]);
+    expect(hiddenToolsFromEnv(undefined).has("builder_heatmap")).toBe(true);
   });
 });

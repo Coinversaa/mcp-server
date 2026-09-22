@@ -1,13 +1,13 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Coinversaa/mcp-server",
-  "description": "Read-only crypto intelligence for AI agents: 103 tools for Hyperliquid trader analytics, builder-revenue analytics, position lifecycles with MAE/MFE, trader archetypes, HIP-4 outcome contracts, cohorts, live market data, builder-dex markets, and cross-market asset taxonomy. Hosted endpoint uses OAuth 2.1 (PKCE + dynamic client registration); stdio package uses a Coinversa API key. No trading or fund movement. Support: chat@coinversaa.ai",
+  "description": "Read-only crypto intelligence for AI agents: 107 tools for Hyperliquid trader analytics, builder-revenue analytics, position lifecycles with MAE/MFE, trader archetypes, HIP-4 outcome contracts, cohorts, live market data, builder-dex markets, and cross-market asset taxonomy. Hosted endpoint uses OAuth 2.1 (PKCE + dynamic client registration); stdio package uses a Coinversa API key. No trading or fund movement. Support: chat@coinversaa.ai",
   "websiteUrl": "https://coinversa.ai",
   "repository": {
     "url": "https://github.com/coinversaa/mcp-server",
     "source": "github"
   },
-  "version": "0.11.1",
+  "version": "0.12.0",
   "remotes": [
     {
       "type": "streamable-http",
@@ -18,7 +18,7 @@
     {
       "registryType": "npm",
       "identifier": "@coinversaa/mcp-server",
-      "version": "0.11.1",
+      "version": "0.12.0",
       "transport": {
         "type": "stdio"
       },

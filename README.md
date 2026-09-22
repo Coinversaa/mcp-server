@@ -6,6 +6,25 @@ Crypto intelligence for AI agents. Query the full Hyperliquid wallet universe, i
 
 **Now with HIP-4 outcome contracts and builder dex support** — inspect prediction-market style outcome contracts, settlements, commodities (gold, silver, oil), stocks (TSLA, AAPL), and perps across 8 dexes and 369+ markets.
 
+## What's new in 0.12.0
+
+**L4 order book tools and dataset coverage.** Five more tools, and full parity with the hosted connector at `https://mcp.coinversa.ai/mcp`.
+
+| New tool | What it answers |
+|----------|-----------------|
+| `book_summary` [Pro] | "What does the resting book for coin X look like right now — depth, spread, imbalance?" |
+| `book_levels` [Pro] | "Where is the resting size stacked, level by level?" |
+| `book_whales` [Pro] | "Which wallets are holding the largest resting orders, and on which side?" |
+| `book_stop_map` [Pro] | "Where are the trigger orders clustered that a move would sweep?" |
+| `data_coverage` | "What window does each dataset cover, and how fresh is it?" |
+
+Tool count: **103 → 107 registered, 106 advertised** (see below).
+
+Also in 0.12.0:
+- **`builder_heatmap` is withheld by default.** Its upstream cannot answer inside the client timeout until the hourly rollup is backfilled, so advertising it only produced timeouts. It is still built in: set `COINVERSAA_HIDDEN_TOOLS=` (explicitly empty) to advertise everything, or name a different comma-separated list to withhold other tools. Leaving the variable unset withholds `builder_heatmap`.
+- **`pulse_market_overview` removed.** It was a deprecated alias for `list_markets`, which is the canonical market-discovery tool.
+- **Descriptions and parameters resynced with the hosted connector.** Twenty tool descriptions and seven input schemas had drifted; `live_mark_dislocations`, `pulse_cohort_bias_history`, `pulse_cohort_performance_daily`, `hip4_outcomes`, `hip4_trader_outcomes` and `pulse_lifecycle` gained the paging and filter parameters the hosted connector already had, and `live_coin_risk_history` gained `include`.
+
 ## What's new in 0.11.1
 
 **Builder user-lifecycle, journey, heatmap, and order-intent analytics.** 4 more tools over the same builder-fee data, covering where a builder's users stand today, how fast it monetizes a new wallet, when its flow actually trades, and what its users intend at order placement.
@@ -151,7 +170,7 @@ There are two ways to connect. Both expose the same 103 read-only tools and both
 | Method | Where | Auth | Best for |
 |--------|-------|------|----------|
 | **Hosted Remote MCP** (recommended) | `https://mcp.coinversa.ai/mcp` | OAuth 2.1 in the browser — no key handling in the client | Claude.ai, Claude Desktop, Claude Code, Cursor, ChatGPT, Perplexity, any Streamable HTTP client |
-| Local stdio MCP (this package) | `npx -y @coinversaa/mcp-server@0.11.1` | `COINVERSAA_API_KEY` env var | Codex and other stdio-only clients, air-gapped setups, development |
+| Local stdio MCP (this package) | `npx -y @coinversaa/mcp-server@0.12.0` | `COINVERSAA_API_KEY` env var | Codex and other stdio-only clients, air-gapped setups, development |
 
 The canonical, always-current client guide lives at [docs.coinversa.ai/mcp/setup](https://docs.coinversa.ai/mcp/setup). The snippets below mirror it.
 
@@ -231,7 +250,7 @@ For stdio-only clients (for example Codex) or when you would rather hold the key
   "mcpServers": {
     "coinversa": {
       "command": "npx",
-      "args": ["-y", "@coinversaa/mcp-server@0.11.1"],
+      "args": ["-y", "@coinversaa/mcp-server@0.12.0"],
       "env": {
         "COINVERSAA_API_KEY": "cvsa_your_key_here"
       }
@@ -243,7 +262,7 @@ For stdio-only clients (for example Codex) or when you would rather hold the key
 Or from a shell:
 
 ```bash
-COINVERSAA_API_KEY=cvsa_... npx -y @coinversaa/mcp-server@0.11.1
+COINVERSAA_API_KEY=cvsa_... npx -y @coinversaa/mcp-server@0.12.0
 ```
 
 This runs the same tools locally over stdio, authenticated by the env key instead of OAuth. The stdio server exits at startup if `COINVERSAA_API_KEY` is missing. No cloning, no building — `npx` handles everything.
@@ -321,7 +340,7 @@ Policies: [coinversa.ai/privacy](https://coinversa.ai/privacy) · [coinversa.ai/
 
 For directory reviewers and security teams, in one place:
 
-- **Read-only.** 103 tools, all `GET`-equivalent analytics; no write, trade, transfer, or account-mutation capability of any kind. No financial transactions are possible through this connector.
+- **Read-only.** 107 tools, all `GET`-equivalent analytics; no write, trade, transfer, or account-mutation capability of any kind. No financial transactions are possible through this connector.
 - **Auth:** OAuth 2.1, PKCE S256, dynamic client registration, refresh-token rotation. No API keys in headers, no static secrets in client config.
 - **Data source:** first-party — the server is operated by Coinversa and calls only Coinversa's own API at `api.coinversa.ai` (plus, during sign-in, the Coinversa developer portal/backend). No third-party data brokers or LLM providers are called.
 - **Transport:** Streamable HTTP (stateless `POST /mcp`), TLS only.
@@ -382,7 +401,7 @@ The 3 asset tools call `/api/public/v1/assets*` endpoints on the production Coin
 
 ## Available Tools (103)
 
-All 103 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
+All 107 tools require an API key. The MCP registers the full tool set, and the Coinversa API enforces access by key tier. Free API keys can use public/discovery routes, while Starter, Pro, and Enterprise keys unlock deeper trader, HIP-4, risk, historical, and official OI tools.
 
 ### Risk Tools Freshness
 
@@ -616,7 +635,7 @@ Once connected, try asking your AI:
 
 ## Environment Variables
 
-These apply to the **local stdio server** (`npx -y @coinversaa/mcp-server@0.11.1`). The hosted endpoint needs no configuration.
+These apply to the **local stdio server** (`npx -y @coinversaa/mcp-server@0.12.0`). The hosted endpoint needs no configuration.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
