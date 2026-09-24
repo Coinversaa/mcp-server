@@ -14,12 +14,15 @@ import { createCoinversaServer } from "../src/coinversaServer.js";
 
 const realFetch = globalThis.fetch;
 const realDisable = process.env.COINVERSAA_DISABLE_CLIENT_HEADERS;
+const realDisableContract = process.env.COINVERSA_DISABLE_CLIENT_HEADERS;
 const API = "https://api.test";
 
 afterEach(() => {
   globalThis.fetch = realFetch;
   if (realDisable === undefined) delete process.env.COINVERSAA_DISABLE_CLIENT_HEADERS;
   else process.env.COINVERSAA_DISABLE_CLIENT_HEADERS = realDisable;
+  if (realDisableContract === undefined) delete process.env.COINVERSA_DISABLE_CLIENT_HEADERS;
+  else process.env.COINVERSA_DISABLE_CLIENT_HEADERS = realDisableContract;
 });
 
 type Seen = { url: string; headers: Record<string, string> };
@@ -99,6 +102,18 @@ describe("stdio client headers", () => {
     expect(h["X-Coinversa-Attempt"]).toBeUndefined();
     expect(h["User-Agent"]).toBe(`coinversa-mcp/${version} (stdio)`);
     expect(h["X-API-Key"]).toBe("cvsa_test");
+  });
+
+  test("the contract spelling COINVERSA_DISABLE_CLIENT_HEADERS=1 also opts out", async () => {
+    delete process.env.COINVERSAA_DISABLE_CLIENT_HEADERS;
+    process.env.COINVERSA_DISABLE_CLIENT_HEADERS = "1";
+    const seen = stubFetch(() => [200, {}]);
+    const { version } = await withClient((c) => c.callTool({ name: "pulse_global_stats", arguments: {} }));
+    const h = seen[0]!.headers;
+    expect(h["X-Coinversa-Client"]).toBeUndefined();
+    expect(h["X-Coinversa-Invocation"]).toBeUndefined();
+    expect(h["X-Coinversa-Attempt"]).toBeUndefined();
+    expect(h["User-Agent"]).toBe(`coinversa-mcp/${version} (stdio)`);
   });
 
   test("no telemetry: every outbound request is a tool's own GET to the configured API", async () => {

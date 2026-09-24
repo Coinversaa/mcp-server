@@ -11,8 +11,9 @@
 // These are self-reported labels on requests that go to the Coinversa API
 // anyway; the stdio build sends no separate telemetry anywhere. They carry no
 // credential, argument, or user data. Set COINVERSAA_DISABLE_CLIENT_HEADERS=1
-// to omit X-Coinversa-Client, -Invocation and -Attempt (User-Agent stays; the
-// runtime would send its own otherwise).
+// (or the contract spelling COINVERSA_DISABLE_CLIENT_HEADERS=1) to omit
+// X-Coinversa-Client, -Invocation and -Attempt (User-Agent stays; the runtime
+// would send its own otherwise).
 //
 // The invocation lives in AsyncLocalStorage so concurrent tool calls (stdio
 // multiplexes requests) never share or swap ids.
@@ -50,7 +51,9 @@ export function userAgent(version: string): string {
 }
 
 export function clientHeadersDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.COINVERSAA_DISABLE_CLIENT_HEADERS === "1";
+  // Either spelling: COINVERSAA_ (this repo's env prefix) or COINVERSA_ (the
+  // spelling in the analytics contract).
+  return env.COINVERSAA_DISABLE_CLIENT_HEADERS === "1" || env.COINVERSA_DISABLE_CLIENT_HEADERS === "1";
 }
 
 /**

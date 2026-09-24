@@ -337,7 +337,7 @@ The hosted server is a thin, stateless bridge between your MCP client and the Co
 | `X-Coinversa-Invocation` | a random UUID | Groups the requests (retries included) that make up one tool call |
 | `X-Coinversa-Attempt` | `1`–`9` | Numbers the requests within one tool call |
 
-The labels contain no credential, argument or personal data. They sit on requests the API already records for metering, and the API treats them as self-reported. Set `COINVERSAA_DISABLE_CLIENT_HEADERS=1` to omit the `X-Coinversa-*` headers. The `User-Agent` stays.
+The labels contain no credential, argument or personal data. They sit on requests the API already records for metering, and the API treats them as self-reported. Set `COINVERSAA_DISABLE_CLIENT_HEADERS=1` (the spelling `COINVERSA_DISABLE_CLIENT_HEADERS=1` also works) to omit the `X-Coinversa-*` headers. The `User-Agent` stays.
 
 The hosted server sends the same labels, with `mcp-hosted` in place of `mcp-stdio`. When enabled, it also sends argument-free tool-call summaries (tool name, outcome, duration) to the Coinversa backend. See the hosted server's README for the full list.
 
