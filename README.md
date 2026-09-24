@@ -328,6 +328,19 @@ The hosted server is a thin, stateless bridge between your MCP client and the Co
 
 **The local stdio server** stores nothing at all: it holds `COINVERSAA_API_KEY` in memory for the life of the process and forwards each tool call to the Coinversa API.
 
+**Telemetry and request labels (local stdio server).** The stdio server sends **no telemetry**, to Coinversa or anyone else. Its only network traffic is the API requests your tool calls make. Each of those requests carries these labels:
+
+| Header | Example | Purpose |
+|---|---|---|
+| `User-Agent` | `coinversa-mcp/0.12.0 (stdio)` | Server version and build |
+| `X-Coinversa-Client` | `mcp-stdio/0.12.0` | Tells MCP traffic apart from direct API use |
+| `X-Coinversa-Invocation` | a random UUID | Groups the requests (retries included) that make up one tool call |
+| `X-Coinversa-Attempt` | `1`–`9` | Numbers the requests within one tool call |
+
+The labels contain no credential, argument or personal data. They sit on requests the API already records for metering, and the API treats them as self-reported. Set `COINVERSAA_DISABLE_CLIENT_HEADERS=1` (the spelling `COINVERSA_DISABLE_CLIENT_HEADERS=1` also works) to omit the `X-Coinversa-*` headers. The `User-Agent` stays.
+
+The hosted server sends the same labels, with `mcp-hosted` in place of `mcp-stdio`. When enabled, it also sends argument-free tool-call summaries (tool name, outcome, duration) to the Coinversa backend. See the hosted server's README for the full list.
+
 **What tool calls send to the Coinversa API:** the parameters you can see in each tool's schema — market symbols, public wallet addresses, cohort names, HIP-4 outcome ids, builder addresses, time windows — plus your API key for authorization and metering. Usage is counted against the key's plan; see [Rate Limits](#rate-limits).
 
 **Scope:** every tool is read-only and is annotated as such (`readOnlyHint: true`, `destructiveHint: false`). The server cannot place orders, sign transactions, move funds, approve agents, or change any account setting on Hyperliquid or Coinversa.
@@ -642,6 +655,7 @@ These apply to the **local stdio server** (`npx -y @coinversaa/mcp-server@0.12.0
 |----------|----------|---------|-------------|
 | `COINVERSAA_API_KEY` | Yes | — | Your API key (starts with `cvsa_`). Required for every tool; the stdio server exits at startup without it. |
 | `COINVERSAA_API_URL` | No | `https://api.coinversa.ai` | Override the API host. Only needed if you operate your own Coinversa backend (self-hosted or fork). |
+| `COINVERSAA_DISABLE_CLIENT_HEADERS` | No | unset | Set to `1` to omit the `X-Coinversa-Client`, `X-Coinversa-Invocation` and `X-Coinversa-Attempt` request labels (see [Privacy & data handling](#privacy--data-handling)). No telemetry is sent either way. |
 
 ## Rate Limits
 
@@ -683,6 +697,8 @@ npx tsc --noEmit
 ```
 
 The hosted OAuth connector at `https://mcp.coinversa.ai/mcp` is operated by Coinversa and is not built from this repository; it serves the same tool set.
+
+**Which repository publishes the npm package.** Checked with `npm view` on 2026-09-24: the latest `@coinversaa/mcp-server` on npm is **0.12.0** (published 2026-09-21). Its registry `gitHead` (`ac94d2dd`) is **not** a commit in this repository. It belongs to Coinversaa/mcp-server-remote, and the 10-file tarball matches that repository's `build/` (it includes `auth.js`, `remote.js` and `store.js`; this repository builds only `index.js` and `coinversaServer.js`). The package's `repository` field points here all the same. Both codebases implement the same stdio request labels, and neither sends telemetry from stdio. Pick one publishing source before the next release.
 
 ## What Makes This Different
 

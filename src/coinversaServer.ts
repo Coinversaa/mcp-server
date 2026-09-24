@@ -10,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { encode as toonEncode } from '@toon-format/toon'
 
 import { z } from "zod";
+import { apiCallHeaders, newInvocation, runInInvocation } from "./clientContext.js";
 
 // ─── Configuration ───────────────────────────────────────
 export interface CoinversaServerOptions {
@@ -272,7 +273,9 @@ async function callAPI(useToon: boolean, path: string, params?: Record<string, s
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-      const headers: Record<string, string> = {};
+      // User-Agent + X-Coinversa-Client/-Invocation/-Attempt (see
+      // clientContext.ts; COINVERSAA_DISABLE_CLIENT_HEADERS=1 opts out).
+      const headers: Record<string, string> = apiCallHeaders(COINVERSA_VERSION);
       if (apiKey) headers["X-API-Key"] = apiKey;
 
       const response = await fetch(url.toString(), {
@@ -733,6 +736,15 @@ const server = new McpServer({
 }, {
   instructions: SERVER_INSTRUCTIONS,
 });
+
+// One invocation per tool call: every callAPI the handler makes (inner calls
+// and retries) shares its X-Coinversa-Invocation id. Nothing is recorded or
+// sent beyond those request headers.
+{
+  const registerTool = server.registerTool.bind(server) as (...args: any[]) => any;
+  (server as any).registerTool = (name: string, config: any, handler: (...args: any[]) => any) =>
+    registerTool(name, config, (...args: any[]) => runInInvocation(newInvocation(), () => handler(...args)));
+}
 
 // ══════════════════════════════════════════════════════════
 // TOOL 1: Global Stats                              [FREE]

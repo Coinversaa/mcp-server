@@ -7,6 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { encode as toonEncode } from '@toon-format/toon';
 import { z } from "zod";
+import { apiCallHeaders, newInvocation, runInInvocation } from "./clientContext.js";
 // Tools whose upstream endpoint cannot currently answer inside the client
 // timeout are withheld from the tool list, matching the hosted connector
 // (2026-09: builder_heatmap, pending its rollup). The hosted server gates
@@ -221,7 +222,9 @@ export function createCoinversaServer(options = {}) {
             try {
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), timeoutMs);
-                const headers = {};
+                // User-Agent + X-Coinversa-Client/-Invocation/-Attempt (see
+                // clientContext.ts; COINVERSAA_DISABLE_CLIENT_HEADERS=1 opts out).
+                const headers = apiCallHeaders(COINVERSA_VERSION);
                 if (apiKey)
                     headers["X-API-Key"] = apiKey;
                 const response = await fetch(url.toString(), {
@@ -662,6 +665,13 @@ TIPS:
     }, {
         instructions: SERVER_INSTRUCTIONS,
     });
+    // One invocation per tool call: every callAPI the handler makes (inner calls
+    // and retries) shares its X-Coinversa-Invocation id. Nothing is recorded or
+    // sent beyond those request headers.
+    {
+        const registerTool = server.registerTool.bind(server);
+        server.registerTool = (name, config, handler) => registerTool(name, config, (...args) => runInInvocation(newInvocation(), () => handler(...args)));
+    }
     // ══════════════════════════════════════════════════════════
     // TOOL 1: Global Stats                              [FREE]
     // ══════════════════════════════════════════════════════════
